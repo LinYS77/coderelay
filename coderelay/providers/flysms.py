@@ -28,6 +28,9 @@ _TOKEN_RE = re.compile(r"^tok_[A-Za-z0-9_-]+$")
 
 class FlySmsProvider(CodeProvider):
     provider_type = "flysms"
+    # A cold FlySMS/iCloud synchronization can take several upstream requests.
+    # Keep a bounded but larger budget than the default single-request timeout.
+    fetch_timeout_seconds = 45.0
 
     def __init__(
         self,

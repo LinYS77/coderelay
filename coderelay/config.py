@@ -27,7 +27,7 @@ class ServerSettings(BaseModel):
     log_level: Literal["debug", "info", "warning", "error", "critical"] = "info"
     max_wait_seconds: int = Field(default=30, ge=0, le=60)
     http_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
-    http_read_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    http_read_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
     http_max_connections: int = Field(default=20, ge=1, le=100)
 
     @field_validator("allowed_hosts")

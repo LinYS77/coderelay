@@ -11,7 +11,7 @@ access_log = false
 log_level = "info"
 max_wait_seconds = 30
 http_connect_timeout_seconds = 5.0
-http_read_timeout_seconds = 10.0
+http_read_timeout_seconds = 20.0
 http_max_connections = 20
 
 [security]

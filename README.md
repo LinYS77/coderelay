@@ -179,7 +179,7 @@ secrets/flysms-email
 secrets/flysms-token
 ```
 
-不要保存完整的 `#email=...&key=...` URL。适配器直接使用请求头调用 JSON API，并将此来源标记为 `experimental`。
+不要保存完整的 `#email=...&key=...` URL。适配器直接使用请求头调用 JSON API，并将此来源标记为 `experimental`。FlySMS 冷同步可能需要数个上游请求；服务使用有限的 45 秒 Provider 预算和 20 秒单请求读取超时，超出后明确返回上游超时，不会无限挂起。
 
 ## 5. 校验并启动
 
@@ -234,7 +234,7 @@ curl --fail-with-body \
 重要参数：
 
 - `not_before`：只接受该 UTC 时间后的邮件；
-- `wait_seconds`：没有新邮件时等待 0～30 秒；
+- `wait_seconds`：没有新邮件时允许继续轮询 0～30 秒；已开始的上游读取使用独立的有限超时，不会被过短的等待参数截断，因此实际 HTTP 时长可能略高于该值；
 - `min_ttl`：TOTP 至少还需有效多少秒。
 
 所有验证码响应包含 `Cache-Control: no-store, private`。

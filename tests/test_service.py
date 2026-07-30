@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from coderelay.domain.errors import NoFreshCode, SourceNotFound, SourceSyncing
+from coderelay.domain.errors import NoFreshCode, SourceNotFound, SourceSyncing, UpstreamTimeout
 from coderelay.domain.models import CodeRequest, ProviderCode, SourceKind, SourceState, SourceStatus
 from coderelay.providers.base import CodeProvider
 from coderelay.services.code_service import CodeService
@@ -35,6 +36,30 @@ class FakeProvider(CodeProvider):
             kind=SourceKind.EMAIL,
             state=SourceState.READY,
         )
+
+
+class SlowNoCodeProvider(FakeProvider):
+    fetch_timeout_seconds = 0.1
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.completed = False
+
+    async def fetch_code(self, request: CodeRequest) -> ProviderCode | None:
+        self.calls += 1
+        await asyncio.sleep(0.03)
+        self.completed = True
+        return None
+
+
+class HangingProvider(SlowNoCodeProvider):
+    fetch_timeout_seconds = 0.01
+
+    async def fetch_code(self, request: CodeRequest) -> ProviderCode | None:
+        self.calls += 1
+        await asyncio.sleep(1)
+        self.completed = True
+        return None
 
 
 def email_result(code: str = "123456") -> ProviderCode:
@@ -78,6 +103,30 @@ async def test_service_short_cache_respects_not_before(app_config) -> None:
         CodeRequest(source_id=provider.id, not_before=result.received_at - timedelta(seconds=1))
     )
     assert first == second
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_short_wait_does_not_cancel_first_upstream_fetch(app_config) -> None:
+    provider = SlowNoCodeProvider()
+    service = CodeService(app_config, {provider.id: provider})
+
+    with pytest.raises(NoFreshCode):
+        await service.get_code(CodeRequest(source_id=provider.id, wait_seconds=0.01))
+
+    assert provider.completed is True
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_timeout_still_bounds_a_hung_fetch(app_config) -> None:
+    provider = HangingProvider()
+    service = CodeService(app_config, {provider.id: provider})
+
+    with pytest.raises(UpstreamTimeout):
+        await service.get_code(CodeRequest(source_id=provider.id))
+
+    assert provider.completed is False
     assert provider.calls == 1
 
 

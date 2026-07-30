@@ -89,16 +89,17 @@ class CodeService:
 
     async def _poll(self, provider: CodeProvider, request: CodeRequest) -> ProviderCode:
         polling = request.wait_seconds > 0
-        total_budget = float(request.wait_seconds) if polling else provider.fetch_timeout_seconds
-        deadline = time.monotonic() + total_budget
+        deadline = time.monotonic() + float(request.wait_seconds) if polling else 0.0
+        attempted = False
         while True:
-            remaining_budget = deadline - time.monotonic()
-            if remaining_budget <= 0:
-                if polling:
-                    raise NoFreshCode(retry_after_seconds=max(1, math.ceil(provider.poll_interval_seconds)))
-                raise UpstreamTimeout()
+            if polling and attempted and time.monotonic() >= deadline:
+                raise NoFreshCode(retry_after_seconds=max(1, math.ceil(provider.poll_interval_seconds)))
+            attempted = True
             try:
-                async with asyncio.timeout(min(provider.fetch_timeout_seconds, remaining_budget)):
+                # A short long-poll window must not cancel a healthy first upstream read.
+                # The deadline decides whether another attempt may start; every started
+                # attempt receives the provider's own bounded I/O budget.
+                async with asyncio.timeout(provider.fetch_timeout_seconds):
                     result = await provider.fetch_code(request)
                 if result is not None:
                     return result
