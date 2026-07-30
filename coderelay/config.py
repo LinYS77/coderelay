@@ -156,29 +156,39 @@ class TotpSourceSettings(SourceBase):
         return self
 
 
-class MicrosoftGraphSourceSettings(SourceBase):
-    type: Literal["microsoft_graph"]
-    client_id_file: Path
-    token_cache_file: Path
-    token_cache_key_file: Path
-    authority: str = "https://login.microsoftonline.com/consumers"
-    account_username: str | None = None
+class OutlookImapSourceSettings(SourceBase):
+    type: Literal["outlook_imap"]
+    credential_file: Path
+    credential_key_file: Path
+    token_url: str = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    imap_host: str = "outlook.office365.com"
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    imap_timeout_seconds: float = Field(default=15.0, ge=3.0, le=60.0)
     poll_interval_seconds: float = Field(default=2.0, ge=1.0, le=10.0)
-    page_size: int = Field(default=10, ge=1, le=50)
-    max_detail_messages: int = Field(default=3, ge=0, le=10)
+    max_messages: int = Field(default=10, ge=1, le=50)
+    max_message_bytes: int = Field(default=262_144, ge=32_768, le=1_048_576)
 
-    @field_validator("authority")
+    @field_validator("token_url")
     @classmethod
-    def validate_authority(cls, value: str) -> str:
+    def validate_token_url(cls, value: str) -> str:
         parsed = urlparse(value)
-        if parsed.scheme != "https" or parsed.netloc != "login.microsoftonline.com":
-            raise ValueError("Microsoft authority must use https://login.microsoftonline.com")
-        return value.rstrip("/")
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "login.microsoftonline.com"
+            or not parsed.path.endswith("/oauth2/v2.0/token")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("Outlook token_url must be a Microsoft v2 token endpoint")
+        return value
 
-    @field_validator("account_username")
+    @field_validator("imap_host")
     @classmethod
-    def normalize_username(cls, value: str | None) -> str | None:
-        return value.strip().casefold() if value and value.strip() else None
+    def validate_imap_host(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not normalized or len(normalized) > 253 or not re.fullmatch(r"[a-z0-9.-]+", normalized):
+            raise ValueError("imap_host is invalid")
+        return normalized
 
 
 class FlySmsSourceSettings(SourceBase):
@@ -202,7 +212,7 @@ class FlySmsSourceSettings(SourceBase):
 
 
 SourceSettings = Annotated[
-    TotpSourceSettings | MicrosoftGraphSourceSettings | FlySmsSourceSettings,
+    TotpSourceSettings | OutlookImapSourceSettings | FlySmsSourceSettings,
     Field(discriminator="type"),
 ]
 
@@ -248,12 +258,11 @@ def _resolve_paths(config: AppConfig, base: Path) -> AppConfig:
     for source in config.sources:
         if isinstance(source, TotpSourceSettings):
             source = source.model_copy(update={"secret_file": _resolve(source.secret_file, base)})
-        elif isinstance(source, MicrosoftGraphSourceSettings):
+        elif isinstance(source, OutlookImapSourceSettings):
             source = source.model_copy(
                 update={
-                    "client_id_file": _resolve(source.client_id_file, base),
-                    "token_cache_file": _resolve(source.token_cache_file, base),
-                    "token_cache_key_file": _resolve(source.token_cache_key_file, base),
+                    "credential_file": _resolve(source.credential_file, base),
+                    "credential_key_file": _resolve(source.credential_key_file, base),
                 }
             )
         elif isinstance(source, FlySmsSourceSettings):

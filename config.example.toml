@@ -39,18 +39,18 @@ default_min_ttl_seconds = 5
 
 [[sources]]
 id = "outlook_primary"
-type = "microsoft_graph"
+type = "outlook_imap"
 display_name = "Outlook"
 enabled = true
-client_id_file = "secrets/ms-client-id"
-token_cache_file = "data/outlook-msal-cache.enc"
-token_cache_key_file = "secrets/msal-cache.key"
-authority = "https://login.microsoftonline.com/consumers"
-# Set this when the cache may contain more than one Microsoft account.
-# account_username = "your-account@outlook.com"
+credential_file = "data/outlook-credential.enc"
+credential_key_file = "secrets/outlook-credential.key"
+token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+imap_host = "outlook.office365.com"
+imap_port = 993
+imap_timeout_seconds = 15.0
 poll_interval_seconds = 2.0
-page_size = 10
-max_detail_messages = 3
+max_messages = 10
+max_message_bytes = 262144
 
 [sources.extractor]
 sender_domains = []
@@ -58,7 +58,8 @@ subject_keywords = ["verification", "security code", "验证码"]
 patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']
 max_age_seconds = 600
 allow_generic_fallback = true
-generic_requires_keyword = true
+# Set to true after adding reliable sender/pattern rules for your mailbox.
+generic_requires_keyword = false
 max_text_chars = 100000
 
 [[sources]]

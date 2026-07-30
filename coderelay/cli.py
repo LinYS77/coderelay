@@ -12,9 +12,10 @@ import uvicorn
 
 from coderelay import __version__
 from coderelay.app import create_app
-from coderelay.config import ConfigError, MicrosoftGraphSourceSettings, load_config
+from coderelay.config import ConfigError, OutlookImapSourceSettings, load_config
+from coderelay.domain.errors import CodeRelayError
+from coderelay.infra.credential_store import EncryptedOutlookCredentialStore, parse_four_part_credential
 from coderelay.infra.logging import configure_logging
-from coderelay.providers.microsoft_graph import run_device_flow
 from coderelay.security import (
     SecretFileError,
     SecurityContext,
@@ -45,12 +46,25 @@ def build_parser() -> argparse.ArgumentParser:
     password.add_argument("--output", type=Path, required=True, help="new file to receive the password hash")
     password.add_argument("--password-stdin", action="store_true", help="read one password line from stdin")
 
-    key = subparsers.add_parser("generate-key", help="generate a session or cache encryption key")
+    key = subparsers.add_parser("generate-key", help="generate a session or credential encryption key")
     key.add_argument("--output", type=Path, required=True, help="new mode-0600 file to receive the key")
 
-    outlook = subparsers.add_parser("outlook-login", help="authorize a Microsoft Graph source using device flow")
+    outlook = subparsers.add_parser(
+        "outlook-import",
+        help="import email----password----client_id----refresh_token into encrypted storage",
+    )
     _add_config_argument(outlook)
-    outlook.add_argument("source_id", help="configured microsoft_graph source ID")
+    outlook.add_argument("source_id", help="configured outlook_imap source ID")
+    outlook.add_argument(
+        "--credential-stdin",
+        action="store_true",
+        help="read the four-part credential from one stdin line instead of a hidden prompt",
+    )
+    outlook.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace an existing encrypted credential (stop the service first)",
+    )
 
     return parser
 
@@ -77,9 +91,9 @@ def main(argv: list[str] | None = None) -> int:
             return _serve(args.config)
         if args.command == "validate-config":
             return asyncio.run(_validate_config(args.config))
-        if args.command == "outlook-login":
-            return _outlook_login(args.config, args.source_id)
-    except (ConfigError, SecretFileError, ValueError, RuntimeError) as exc:
+        if args.command == "outlook-import":
+            return _outlook_import(args.config, args.source_id, args.credential_stdin, args.replace)
+    except (CodeRelayError, ConfigError, SecretFileError, ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 2
@@ -154,23 +168,35 @@ async def _validate_config(config_path: Path) -> int:
     return 0
 
 
-def _outlook_login(config_path: Path, source_id: str) -> int:
+def _outlook_import(
+    config_path: Path,
+    source_id: str,
+    credential_stdin: bool,
+    replace: bool,
+) -> int:
     config = load_config(config_path)
     try:
         source = config.source_by_id(source_id)
     except KeyError:
         raise ValueError(f"unknown source: {source_id}") from None
-    if not isinstance(source, MicrosoftGraphSourceSettings):
-        raise ValueError(f"source {source_id!r} is not a microsoft_graph source")
-    print("Stop the running CodeRelay service before updating its MSAL cache.")
-    username = run_device_flow(
-        source,
-        strict_secret_permissions=config.security.strict_secret_permissions,
-        show_message=print,
+    if not isinstance(source, OutlookImapSourceSettings):
+        raise ValueError(f"source {source_id!r} is not an outlook_imap source")
+    if credential_stdin:
+        raw = sys.stdin.readline().rstrip("\r\n")
+    else:
+        raw = getpass.getpass("Paste email----password----client_id----refresh_token: ")
+    credential = parse_four_part_credential(raw)
+    raw = ""
+    store = EncryptedOutlookCredentialStore(
+        source.credential_file,
+        source.credential_key_file,
+        source_id=source.id,
+        strict_permissions=config.security.strict_secret_permissions,
     )
-    print("Microsoft authorization completed successfully.")
-    if username:
-        print(f"Authorized account: {username}")
+    store.save(credential, overwrite=replace)
+    credential = None
+    print(f"Encrypted Outlook credential written for source {source_id!r}.")
+    print("The password field was discarded and was not stored.")
     return 0
 
 

@@ -22,7 +22,7 @@ from coderelay.security import (
 
 def test_example_config_parses_and_resolves_paths() -> None:
     config = load_config("config.example.toml")
-    assert [source.type for source in config.sources] == ["totp", "microsoft_graph", "flysms"]
+    assert [source.type for source in config.sources] == ["totp", "outlook_imap", "flysms"]
     assert config.security.api_token_hash_files[0].is_absolute()
     assert config.sources[0].id == "primary_totp"
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coderelay"
-version = "0.1.0"
+version = "0.2.0"
 description = "A single-user, security-focused TOTP and mailbox verification-code relay"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -16,7 +16,6 @@ dependencies = [
   "fastapi>=0.115,<1",
   "httpx>=0.27,<1",
   "jinja2>=3.1,<4",
-  "msal>=1.31,<2",
   "pyotp>=2.9,<3",
   "uvicorn>=0.34,<1",
 ]

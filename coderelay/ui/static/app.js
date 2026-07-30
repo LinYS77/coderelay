@@ -95,7 +95,8 @@ function createSourceCard(source) {
   const heading = element("div", "source-heading");
   const titleGroup = element("div");
   titleGroup.append(element("h3", "", source.display_name));
-  titleGroup.append(element("div", "source-kind", source.kind === "totp" ? "TOTP · 本地生成" : source.provider_type === "flysms" ? "FlySMS · 邮件" : "Microsoft Graph · 邮件"));
+  const providerLabel = source.provider_type === "flysms" ? "FlySMS · 邮件" : "Outlook IMAP · 邮件";
+  titleGroup.append(element("div", "source-kind", source.kind === "totp" ? "TOTP · 本地生成" : providerLabel));
   const badgeState = source.experimental ? "experimental" : source.state;
   heading.append(titleGroup, element("span", `badge ${badgeState}`, stateLabels[badgeState] || badgeState));
 

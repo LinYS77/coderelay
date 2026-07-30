@@ -14,6 +14,7 @@ _REDACTIONS = (
     re.compile(r"(?i)\b(cr_live_|tok_)[A-Za-z0-9_-]+"),
     re.compile(r"(?i)(refresh[_ -]?token\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(password\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"\bM\.[A-Za-z0-9!*$._-]{80,}"),
 )
 
 
@@ -62,9 +63,9 @@ def configure_logging(level: str = "info") -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    for name in ("uvicorn", "uvicorn.error", "httpx", "httpcore", "msal"):
+    for name in ("uvicorn", "uvicorn.error", "httpx", "httpcore"):
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
-        if name in {"httpx", "httpcore", "msal"}:
+        if name in {"httpx", "httpcore"}:
             logger.setLevel(logging.WARNING)

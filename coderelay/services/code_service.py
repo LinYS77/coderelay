@@ -11,7 +11,7 @@ import httpx
 from coderelay.config import (
     AppConfig,
     FlySmsSourceSettings,
-    MicrosoftGraphSourceSettings,
+    OutlookImapSourceSettings,
     TotpSourceSettings,
 )
 from coderelay.domain.errors import (
@@ -24,7 +24,7 @@ from coderelay.domain.errors import (
     UpstreamTimeout,
 )
 from coderelay.domain.models import CodeRequest, ProviderCode, SourceKind, SourceState, SourceStatus
-from coderelay.providers import FlySmsProvider, MicrosoftGraphProvider, TotpProvider
+from coderelay.providers import FlySmsProvider, OutlookImapProvider, TotpProvider
 from coderelay.providers.base import CodeProvider
 
 
@@ -164,8 +164,8 @@ def build_code_service(config: AppConfig, client: httpx.AsyncClient) -> CodeServ
             continue
         if isinstance(settings, TotpSourceSettings):
             provider: CodeProvider = TotpProvider(settings, strict_secret_permissions=strict)
-        elif isinstance(settings, MicrosoftGraphSourceSettings):
-            provider = MicrosoftGraphProvider(settings, client, strict_secret_permissions=strict)
+        elif isinstance(settings, OutlookImapSourceSettings):
+            provider = OutlookImapProvider(settings, client, strict_secret_permissions=strict)
         elif isinstance(settings, FlySmsSourceSettings):
             provider = FlySmsProvider(settings, client, strict_secret_permissions=strict)
         else:  # pragma: no cover - guarded by the discriminated config model

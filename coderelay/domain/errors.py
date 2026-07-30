@@ -70,7 +70,7 @@ class SourceCredentialsInvalid(CodeRelayError):
 class SourceReauthRequired(CodeRelayError):
     code = "SOURCE_REAUTH_REQUIRED"
     status_code = 424
-    public_message = "The source requires interactive authorization"
+    public_message = "The source requires credential reauthorization or re-import"
 
 
 class SourceExpiredOrDisabled(CodeRelayError):
