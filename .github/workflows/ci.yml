@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip install --no-deps .
+      - name: Static checks
+        run: |
+          ruff check coderelay tests binary_entry.py
+          python -m compileall -q coderelay binary_entry.py
+          python -m pip check
+      - name: Tests
+        run: pytest -q
+
+  binary:
+    needs: test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - name: Install locked dependencies
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip install --no-deps .
+      - name: Build and smoke-test executable
+        run: |
+          python -m PyInstaller --clean --noconfirm coderelay.spec
+          ./dist/coderelay --version
+          (cd dist && sha256sum coderelay > coderelay.sha256)
+          (cd dist && sha256sum -c coderelay.sha256)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coderelay-linux-x86_64-glibc235
+          path: |
+            dist/coderelay
+            dist/coderelay.sha256
+          if-no-files-found: error
+          retention-days: 7
