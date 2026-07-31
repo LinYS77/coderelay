@@ -44,16 +44,17 @@ async def require_auth(request: Request) -> Principal:
         claims = container.security.session_signer.verify(cookie)
         if claims is not None:
             principal = Principal(kind="session", identifier=claims.nonce, session=claims)
+    limit = container.config.security.api_rate_limit_per_minute
+    ip = client_ip(request)
+    ip_retry = await container.rate_limiter.check(f"api:ip:{ip}", limit=limit)
+    if ip_retry:
+        raise RequestRateLimited(retry_after_seconds=ip_retry)
     if principal is None:
         raise AuthenticationRequired()
 
-    limit = container.config.security.api_rate_limit_per_minute
-    ip = client_ip(request)
     principal_retry = await container.rate_limiter.check(f"api:principal:{principal.identifier}", limit=limit)
-    ip_retry = await container.rate_limiter.check(f"api:ip:{ip}", limit=limit)
-    retry_after = max(principal_retry or 0, ip_retry or 0)
-    if retry_after:
-        raise RequestRateLimited(retry_after_seconds=retry_after)
+    if principal_retry:
+        raise RequestRateLimited(retry_after_seconds=principal_retry)
     return principal
 
 

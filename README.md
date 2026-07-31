@@ -205,12 +205,14 @@ GET /health/ready
 
 ## 6. API
 
+提供给其他项目的完整鉴权、超时、错误处理和多语言调用说明见 [`docs/API调用指南.md`](docs/API调用指南.md)。生产域名为 `https://2fa.077.li`。
+
 ### 来源列表
 
 ```bash
 curl --fail-with-body \
   -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  https://codes.example.com/api/v1/sources
+  https://2fa.077.li/api/v1/sources
 ```
 
 ### TOTP
@@ -218,7 +220,7 @@ curl --fail-with-body \
 ```bash
 curl --fail-with-body \
   -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  'https://codes.example.com/api/v1/codes/primary_totp?min_ttl=5'
+  'https://2fa.077.li/api/v1/codes/primary_totp?min_ttl=5'
 ```
 
 ### Outlook 或 FlySMS 邮件验证码
@@ -228,7 +230,7 @@ curl --fail-with-body \
 ```bash
 curl --fail-with-body \
   -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  'https://codes.example.com/api/v1/codes/outlook_primary?not_before=2026-07-30T03%3A00%3A00Z&wait_seconds=20'
+  'https://2fa.077.li/api/v1/codes/outlook_primary?not_before=2026-07-30T03%3A00%3A00Z&wait_seconds=20'
 ```
 
 重要参数：

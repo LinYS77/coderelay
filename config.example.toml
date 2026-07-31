@@ -4,7 +4,7 @@
 [server]
 host = "127.0.0.1"
 port = 8787
-allowed_hosts = ["codes.example.com", "localhost", "127.0.0.1"]
+allowed_hosts = ["2fa.077.li", "localhost", "127.0.0.1"]
 cors_origins = []
 forwarded_allow_ips = "127.0.0.1"
 access_log = false
