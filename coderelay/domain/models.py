@@ -1,29 +1,48 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
-from typing import Any
 
 
-class SourceKind(StrEnum):
-    TOTP = "totp"
-    EMAIL = "email"
+@dataclass(slots=True)
+class TotpCodeCommand:
+    credential: str
+    min_ttl_seconds: int = 5
 
 
-class SourceState(StrEnum):
-    READY = "ready"
-    REQUIRES_SETUP = "requires_setup"
-    DISABLED = "disabled"
-    EXPERIMENTAL = "experimental"
+@dataclass(slots=True)
+class OutlookCodeCommand:
+    credential: str
+    not_before: datetime | None = None
+    wait_seconds: int = 20
+
+
+@dataclass(slots=True)
+class FlySmsCodeCommand:
+    credential: str
+    not_before: datetime | None = None
+    wait_seconds: int = 20
+
+
+CodeCommand = TotpCodeCommand | OutlookCodeCommand | FlySmsCodeCommand
 
 
 @dataclass(frozen=True, slots=True)
 class CodeRequest:
-    source_id: str
     not_before: datetime | None = None
     wait_seconds: int = 0
     min_ttl_seconds: int = 5
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialUpdate:
+    refresh_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class CodeResult:
+    code: str
+    credential_update: CredentialUpdate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,24 +66,9 @@ class ExtractedCode:
 
 @dataclass(frozen=True, slots=True)
 class ProviderCode:
-    source_id: str
-    kind: SourceKind
     code: str
     observed_at: datetime
     received_at: datetime | None = None
     valid_from: datetime | None = None
     expires_at: datetime | None = None
     remaining_seconds: int | None = None
-    freshness: str = "fresh"
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class SourceStatus:
-    id: str
-    display_name: str
-    provider_type: str
-    kind: SourceKind
-    state: SourceState
-    experimental: bool = False
-    identity_hint: str | None = None

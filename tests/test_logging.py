@@ -7,10 +7,14 @@ from coderelay.infra.logging import JsonFormatter, RedactingFilter, redact
 
 def test_redact_hides_bearer_and_provider_tokens() -> None:
     refresh_token = "M." + "x" * 120
-    value = redact(f"Authorization: Bearer secret-value tok_abcdefghijklmnopqrstuvwxyz {refresh_token}")
+    value = redact(
+        f"Authorization: Bearer secret-value tok_abcdefghijklmnopqrstuvwxyz {refresh_token} "
+        "credential=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    )
     assert "secret-value" not in value
     assert "abcdefghijklmnopqrstuvwxyz" not in value
     assert refresh_token not in value
+    assert "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" not in value
     assert "[REDACTED]" in value
 
 

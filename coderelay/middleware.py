@@ -140,7 +140,7 @@ class SecurityHeadersMiddleware:
                 }
                 for name, value in security_headers.items():
                     _set_header(headers, name, value)
-                if path.startswith(("/api/", "/auth/", "/app", "/login")):
+                if path.startswith("/api/"):
                     _set_header(headers, b"cache-control", b"no-store, private")
                     _set_header(headers, b"pragma", b"no-cache")
                 if scheme == "https":

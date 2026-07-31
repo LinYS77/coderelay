@@ -3,89 +3,113 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from dataclasses import dataclass
-from datetime import UTC
+from collections.abc import Callable
 
 import httpx
 
-from coderelay.config import (
-    AppConfig,
-    FlySmsSourceSettings,
-    OutlookImapSourceSettings,
-    TotpSourceSettings,
-)
+from coderelay import __version__
+from coderelay.config import AppConfig
+from coderelay.domain.credentials import CredentialError, parse_flysms_credential, parse_outlook_credential
 from coderelay.domain.errors import (
+    CodeRelayError,
+    InvalidCodeRequest,
     NoFreshCode,
-    SourceDisabled,
-    SourceNotFound,
     SourceRateLimited,
     SourceSyncing,
     UpstreamFailure,
     UpstreamTimeout,
 )
-from coderelay.domain.models import CodeRequest, ProviderCode, SourceKind, SourceState, SourceStatus
-from coderelay.providers import FlySmsProvider, OutlookImapProvider, TotpProvider
-from coderelay.providers.base import CodeProvider
+from coderelay.domain.models import (
+    CodeCommand,
+    CodeRequest,
+    CodeResult,
+    FlySmsCodeCommand,
+    OutlookCodeCommand,
+    ProviderCode,
+    TotpCodeCommand,
+)
+from coderelay.providers import CodeProvider, FlySmsProvider, OutlookImapProvider, TotpProvider
 
-
-@dataclass(slots=True)
-class _CachedResult:
-    result: ProviderCode
-    stored_at: float
+ProviderFactory = Callable[[CodeCommand, httpx.AsyncClient], CodeProvider]
+ClientFactory = Callable[[], httpx.AsyncClient]
 
 
 class CodeService:
-    def __init__(self, config: AppConfig, providers: dict[str, CodeProvider]) -> None:
+    """Resolve one request-scoped credential without retaining upstream state."""
+
+    def __init__(
+        self,
+        config: AppConfig,
+        *,
+        provider_factory: ProviderFactory | None = None,
+        client_factory: ClientFactory | None = None,
+    ) -> None:
         self._config = config
-        self._providers = providers
-        self._locks = {source.id: asyncio.Lock() for source in config.sources}
-        self._cache: dict[str, _CachedResult] = {}
+        self._provider_factory = provider_factory or self._build_provider
+        self._client_factory = client_factory or self._new_client
+        self._concurrency = asyncio.Semaphore(config.server.max_concurrent_code_requests)
 
-    async def get_code(self, request: CodeRequest) -> ProviderCode:
-        source_settings = next((source for source in self._config.sources if source.id == request.source_id), None)
-        if source_settings is None:
-            raise SourceNotFound()
-        if not source_settings.enabled:
-            raise SourceDisabled()
-        provider = self._providers.get(request.source_id)
-        if provider is None:
-            raise SourceNotFound()
+    async def resolve(self, command: CodeCommand) -> CodeResult:
+        try:
+            async with self._concurrency, self._client_factory() as client:
+                return await self._resolve_bounded(command, client)
+        finally:
+            # This drops CodeRelay's command-level reference. Python cannot promise
+            # physical memory zeroization, but no reference is retained cross-request.
+            command.credential = ""
 
-        cached = self._usable_cached(request)
-        if cached is not None:
-            return cached
+    async def _resolve_bounded(self, command: CodeCommand, client: httpx.AsyncClient) -> CodeResult:
+        try:
+            provider = self._provider_factory(command, client)
+        except (CredentialError, TypeError, ValueError) as exc:
+            raise InvalidCodeRequest() from exc
 
-        async with self._locks[request.source_id]:
-            cached = self._usable_cached(request)
-            if cached is not None:
-                return cached
+        try:
+            request = self._provider_request(command)
             result = await self._poll(provider, request)
-            if result.kind == SourceKind.EMAIL:
-                self._cache[request.source_id] = _CachedResult(result=result, stored_at=time.monotonic())
-            return result
-
-    def list_sources(self) -> list[SourceStatus]:
-        result: list[SourceStatus] = []
-        for source in self._config.sources:
-            if not source.enabled:
-                result.append(
-                    SourceStatus(
-                        id=source.id,
-                        display_name=source.display_name,
-                        provider_type=source.type,
-                        kind=SourceKind.TOTP if source.type == "totp" else SourceKind.EMAIL,
-                        state=SourceState.DISABLED,
-                        experimental=source.type == "flysms",
-                    )
-                )
-                continue
-            provider = self._providers[source.id]
-            result.append(provider.status())
-        return result
-
-    def close(self) -> None:
-        for provider in self._providers.values():
+            return CodeResult(code=result.code, credential_update=provider.credential_update)
+        except CodeRelayError as exc:
+            if exc.credential_update is None:
+                exc.credential_update = provider.credential_update
+            raise
+        finally:
             provider.close()
+
+    def _new_client(self) -> httpx.AsyncClient:
+        timeout = httpx.Timeout(
+            connect=self._config.server.http_connect_timeout_seconds,
+            read=self._config.server.http_read_timeout_seconds,
+            write=self._config.server.http_read_timeout_seconds,
+            pool=self._config.server.http_connect_timeout_seconds,
+        )
+        limits = httpx.Limits(
+            max_connections=self._config.server.http_max_connections,
+            max_keepalive_connections=min(10, self._config.server.http_max_connections),
+        )
+        return httpx.AsyncClient(
+            timeout=timeout,
+            limits=limits,
+            follow_redirects=False,
+            trust_env=False,
+            headers={"User-Agent": f"CodeRelay/{__version__}"},
+        )
+
+    def _build_provider(self, command: CodeCommand, client: httpx.AsyncClient) -> CodeProvider:
+        if isinstance(command, TotpCodeCommand):
+            return TotpProvider(command.credential)
+        if isinstance(command, OutlookCodeCommand):
+            credential = parse_outlook_credential(command.credential)
+            return OutlookImapProvider(self._config.providers.outlook, client, credential)
+        if isinstance(command, FlySmsCodeCommand):
+            credential = parse_flysms_credential(command.credential)
+            return FlySmsProvider(self._config.providers.flysms, client, credential)
+        raise TypeError("unsupported code command")
+
+    @staticmethod
+    def _provider_request(command: CodeCommand) -> CodeRequest:
+        if isinstance(command, TotpCodeCommand):
+            return CodeRequest(min_ttl_seconds=command.min_ttl_seconds)
+        return CodeRequest(not_before=command.not_before, wait_seconds=command.wait_seconds)
 
     async def _poll(self, provider: CodeProvider, request: CodeRequest) -> ProviderCode:
         polling = request.wait_seconds > 0
@@ -96,9 +120,6 @@ class CodeService:
                 raise NoFreshCode(retry_after_seconds=max(1, math.ceil(provider.poll_interval_seconds)))
             attempted = True
             try:
-                # A short long-poll window must not cancel a healthy first upstream read.
-                # The deadline decides whether another attempt may start; every started
-                # attempt receives the provider's own bounded I/O budget.
                 async with asyncio.timeout(provider.fetch_timeout_seconds):
                     result = await provider.fetch_code(request)
                 if result is not None:
@@ -128,8 +149,8 @@ class CodeService:
                 raise NoFreshCode(retry_after_seconds=max(1, math.ceil(provider.poll_interval_seconds)))
             await asyncio.sleep(min(provider.poll_interval_seconds, remaining))
 
+    @staticmethod
     async def _sleep_for_retry(
-        self,
         retry_after: int | None,
         deadline: float,
         fallback: float = 1.0,
@@ -141,35 +162,9 @@ class CodeService:
         await asyncio.sleep(max(0.05, delay))
         return True
 
-    def _usable_cached(self, request: CodeRequest) -> ProviderCode | None:
-        cached = self._cache.get(request.source_id)
-        if cached is None or time.monotonic() - cached.stored_at > 2.0:
-            return None
-        result = cached.result
-        if result.received_at is None:
-            return None
-        if request.not_before is not None:
-            boundary = request.not_before
-            if boundary.tzinfo is None:
-                boundary = boundary.replace(tzinfo=UTC)
-            if result.received_at < boundary.astimezone(UTC):
-                return None
-        return result
+    def close(self) -> None:
+        """No providers or HTTP clients survive a request."""
 
 
-def build_code_service(config: AppConfig, client: httpx.AsyncClient) -> CodeService:
-    providers: dict[str, CodeProvider] = {}
-    strict = config.security.strict_secret_permissions
-    for settings in config.sources:
-        if not settings.enabled:
-            continue
-        if isinstance(settings, TotpSourceSettings):
-            provider: CodeProvider = TotpProvider(settings, strict_secret_permissions=strict)
-        elif isinstance(settings, OutlookImapSourceSettings):
-            provider = OutlookImapProvider(settings, client, strict_secret_permissions=strict)
-        elif isinstance(settings, FlySmsSourceSettings):
-            provider = FlySmsProvider(settings, client, strict_secret_permissions=strict)
-        else:  # pragma: no cover - guarded by the discriminated config model
-            raise TypeError(f"unsupported source settings: {type(settings)!r}")
-        providers[settings.id] = provider
-    return CodeService(config, providers)
+def build_code_service(config: AppConfig) -> CodeService:
+    return CodeService(config)

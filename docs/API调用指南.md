@@ -1,269 +1,219 @@
-# CodeRelay API 调用指南
+# CodeRelay 0.3 API 调用指南
 
-本文档提供给需要从 CodeRelay 获取验证码的其他项目。
+本文档提供给调用 `https://2fa.077.li` 的后端项目。CodeRelay 0.3 是无状态取码服务：每次请求携带本次上游凭据，服务器不持久化这些凭据。
 
-## 1. 服务地址与安全要求
-
-生产地址：
-
-```text
-https://2fa.077.li
-```
-
-所有读取来源或验证码的 API 都需要鉴权：
+## 1. 固定契约
 
 ```http
+POST /api/v1/code
+Host: 2fa.077.li
 Authorization: Bearer <CODERELAY_API_TOKEN>
+Content-Type: application/json
+Accept: application/json
 ```
 
-调用方必须遵守：
-
-- 只使用 HTTPS，不允许绕过 HTTPS 调用公网服务；
-- API Token 只能放在 `Authorization` 请求头；
-- 禁止把 Token 放入 URL、查询参数、源码、Git、异常信息或普通日志；
-- 禁止记录完整验证码响应；
-- Token 应由部署平台的 secret/environment 管理；
-- 每个消费项目使用独立 Token，避免多个项目共享同一把密钥；
-- 收到 `401` 后不要无限重试，应检查或轮换 Token；
-- 所有 API 尝试（包括无效 Token）受每 IP 限流，已认证调用还受每 Token 指纹限流；默认上限为每分钟 60 次。
-
-推荐环境变量：
-
-```text
-CODERELAY_BASE_URL=https://2fa.077.li
-CODERELAY_API_TOKEN=<由管理员单独签发>
-```
-
-以下端点不需要 API Token，但不会返回来源、邮箱或验证码：
-
-```text
-GET /health/live
-GET /health/ready
-```
-
-网页密码/session 与机器 API Token 是两套独立凭据。其他项目必须使用 Bearer Token，不应模拟网页登录。
-
-## 2. 最小调用流程
-
-邮件验证码的可靠调用流程是：
-
-```text
-1. 记录当前 UTC 时间
-2. 触发目标系统发送验证码邮件
-3. 调用 CodeRelay，并将第 1 步的时间作为 not_before
-4. 从 HTTP 200 JSON 响应读取 code
-```
-
-不能简单地无条件获取“最后一封邮件”，否则可能把上一次验证码误认为当前验证码。
-
-示意：
-
-```python
-async def request_current_code() -> str:
-    triggered_at = datetime.now(UTC)  # 必须在触发发送之前记录
-    await trigger_remote_verification_email()
-    return await get_coderelay_code(
-        source_id="outlook_primary",
-        not_before=triggered_at,
-    )
-```
-
-调用方和 CodeRelay VPS 都应启用 NTP 时间同步。
-
-## 3. API 概览
-
-### 3.1 查询可用来源
-
-```http
-GET /api/v1/sources
-Authorization: Bearer <token>
-```
-
-示例：
-
-```bash
-curl --fail-with-body \
-  --connect-timeout 5 \
-  --max-time 30 \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  -H "Accept: application/json" \
-  https://2fa.077.li/api/v1/sources
-```
-
-成功响应示例：
+成功响应：
 
 ```json
-[
-  {
-    "id": "primary_totp",
-    "display_name": "Primary TOTP",
-    "provider_type": "totp",
-    "kind": "totp",
-    "state": "ready",
-    "experimental": false,
-    "identity_hint": null
-  },
-  {
-    "id": "outlook_primary",
-    "display_name": "Outlook",
-    "provider_type": "outlook_imap",
-    "kind": "email",
-    "state": "ready",
-    "experimental": false,
-    "identity_hint": "a***z@example.com"
-  }
-]
+{"code":"123456"}
 ```
 
-调用项目通常应固定使用管理员分配的 `source_id`，而不是每次根据 `display_name` 猜测来源。
-
-### 3.2 获取验证码
-
-```http
-GET /api/v1/codes/{source_id}
-Authorization: Bearer <token>
-```
-
-成功响应中的 `code` 始终为六位数字字符串：
-
-```json
-{
-  "source_id": "outlook_primary",
-  "kind": "email",
-  "code": "123456",
-  "freshness": "fresh",
-  "observed_at": "2026-07-30T09:05:00Z",
-  "received_at": "2026-07-30T09:04:28Z",
-  "valid_from": null,
-  "expires_at": null,
-  "remaining_seconds": null,
-  "evidence": {
-    "sender": "Service <no-reply@example.com>",
-    "subject": "Your verification code ••••••",
-    "message_fingerprint": "sha256:0123456789abcdef01234567"
-  }
-}
-```
-
-调用方正常情况下只需要：
+调用项目正常只需读取：
 
 ```python
 code = response.json()["code"]
 ```
 
-不要依赖 `evidence.subject` 的具体文本；它只用于诊断，并可能随邮件模板变化。
+所有取码请求必须有 CodeRelay Bearer Token。Token 只允许放在 `Authorization` 请求头，不接受 URL/query token。
 
-所有验证码响应都包含：
+## 2. 两层凭据
 
-```http
-Cache-Control: no-store, private
-Pragma: no-cache
-```
+一次调用包含两类不同凭据：
 
-调用方也不得自行缓存验证码。
+1. **CodeRelay API Token**：证明调用项目有权使用公网服务；
+2. **请求级 credential**：本次 TOTP、Outlook 或 FlySMS 上游凭据。
 
-## 4. 请求参数
+CodeRelay 服务器只持久化第 1 类凭据的 hash。第 2 类凭据仅在请求期间存在于内存中，不写配置、文件、数据库或跨请求缓存。
 
-### `not_before`
-
-适用：Outlook、FlySMS 等邮件来源。
-
-RFC 3339/ISO 8601 格式，必须包含时区。推荐传 UTC：
+每个消费项目应使用独立 API Token：
 
 ```text
-2026-07-30T09:03:00Z
+CODERELAY_BASE_URL=https://2fa.077.li
+CODERELAY_API_TOKEN=<管理员签发>
 ```
 
-含义：只接受该时间点之后收到的邮件。
+不要把 API Token 或请求级 credential 写入：
 
-邮件来源在生产调用中应始终传此参数。
+- URL；
+- Git；
+- 普通日志；
+- 异常信息；
+- 监控标签；
+- 浏览器前端；
+- 消息队列的明文事件。
 
-### `wait_seconds`
+## 3. TOTP
 
-适用：邮件来源。
+请求：
 
-```text
-范围：0～30 秒（受服务器配置限制）
-推荐：30
+```json
+{
+  "type": "totp",
+  "credential": "BASE32_SECRET",
+  "min_ttl": 5
+}
 ```
 
-没有匹配邮件时，CodeRelay 会在有限时间内重新检查。已经开始的上游读取拥有独立的硬超时，不会被过短的 `wait_seconds` 截断，因此实际 HTTP 请求时间可能略高于该值。
+`credential` 支持：
 
-调用项目推荐设置：
+- Base32 TOTP Secret；
+- 完整 `otpauth://totp/...` URI。
+
+约束：
+
+- 只返回六位 TOTP；
+- `min_ttl` 范围 0～30，推荐 5；
+- 当前窗口剩余时间不足时，服务等待下一个窗口。
+
+## 4. Outlook
+
+请求：
+
+```json
+{
+  "type": "outlook",
+  "credential": "email----password----client_id----refresh_token",
+  "not_before": "2026-07-31T03:00:00Z",
+  "wait_seconds": 30
+}
+```
+
+处理方式：
 
 ```text
+解析四段式
+→ password 立即丢弃
+→ refresh token 换取 access token
+→ IMAP XOAUTH2
+→ readonly 选择 INBOX
+→ BODY.PEEK 读取，不标记已读
+→ 提取六位验证码
+→ 请求结束清理引用
+```
+
+CodeRelay 不使用 Outlook password；保留该字段只是为了兼容调用项目现有字符串格式。
+
+### Refresh token 轮换
+
+Microsoft 可能在刷新 access token 时返回新的 refresh token。CodeRelay 不保存它，而是返回给调用项目：
+
+```json
+{
+  "code": "123456",
+  "credential_update": {
+    "refresh_token": "NEW_REFRESH_TOKEN"
+  }
+}
+```
+
+调用项目必须原子更新自己的 secret manager 中第四段 refresh token。
+
+即使没有新验证码，错误响应也可能携带轮换信息：
+
+```json
+{
+  "error": {
+    "code": "NO_FRESH_CODE",
+    "message": "No matching fresh verification code was found",
+    "retryable": true,
+    "retry_after_seconds": 2,
+    "request_id": "..."
+  },
+  "credential_update": {
+    "refresh_token": "NEW_REFRESH_TOKEN"
+  }
+}
+```
+
+因此调用方必须先处理 `credential_update`，再处理成功或错误。
+
+## 5. FlySMS
+
+请求 credential 格式：
+
+```text
+email---token---https://flysms.xyz/icloud/pickup#email=...&key=...
+```
+
+JSON：
+
+```json
+{
+  "type": "flysms",
+  "credential": "email---token---https://flysms.xyz/icloud/pickup#email=...&key=...",
+  "not_before": "2026-07-31T03:00:00Z",
+  "wait_seconds": 30
+}
+```
+
+CodeRelay 会验证：
+
+- 第一段 email 格式；
+- 第二段 `tok_...` 格式；
+- URL 必须是 `https://flysms.xyz/icloud/pickup`；
+- fragment 必须且只能含 `email` 和 `key`；
+- fragment 的 email/token 必须与前两段一致；
+- 不允许调用项目改变协议、域名、端口或路径。
+
+传入的 pickup URL 只用于格式和一致性验证。CodeRelay 实际请求固定的 FlySMS JSON API，不会把它当作任意 URL 请求，从而避免 SSRF。
+
+FlySMS 上游冷同步可能较慢，调用方必须正确处理 `502`、`503` 和 `504`。
+
+## 6. `not_before` 与正确性
+
+邮件验证码建议始终传 `not_before`：
+
+```text
+1. 调用项目记录当前 UTC 时间
+2. 调用项目触发上游发送验证码
+3. 将记录时间传给 CodeRelay
+```
+
+Python：
+
+```python
+async def request_current_code(credential: str) -> str:
+    triggered_at = datetime.now(UTC)
+    await trigger_remote_verification_email()
+    code, credential_update = await resolve_code(
+        type="outlook",
+        credential=credential,
+        not_before=triggered_at,
+    )
+    if credential_update is not None:
+        await persist_refresh_token_atomically(credential_update["refresh_token"])
+    return code
+```
+
+`not_before` 必须包含时区，推荐 UTC `Z` 格式。调用方和 VPS 都应启用 NTP。
+
+如果省略，CodeRelay 仍会应用服务器配置的最大邮件年龄，但无法严格区分本次验证码和很近的上一封验证码。
+
+## 7. `wait_seconds` 与客户端超时
+
+邮件请求：
+
+```text
+wait_seconds：0～30，推荐 30
 连接超时：5 秒
-整体请求超时：75 秒
+调用方整体超时：75 秒
 ```
 
-不要使用两秒之类的客户端整体超时。
+已经开始的上游读取使用独立硬超时，不会被较短的轮询窗口中途截断，因此实际 HTTP 时长可能略超过 `wait_seconds`。
 
-### `min_ttl`
+不要在调用项目中每秒高频轮询。优先使用一次 `wait_seconds=30` 请求。
 
-适用：TOTP。
-
-表示返回的 TOTP 至少还需要有效多少秒：
-
-```text
-范围：0～30
-推荐：5
-```
-
-如果当前验证码即将过期，CodeRelay 会等待下一时间窗口后再返回。
-
-## 5. 各来源调用示例
-
-### 5.1 TOTP
-
-```bash
-curl --fail-with-body \
-  --connect-timeout 5 \
-  --max-time 40 \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  -H "Accept: application/json" \
-  'https://2fa.077.li/api/v1/codes/primary_totp?min_ttl=5'
-```
-
-### 5.2 Outlook 邮件验证码
-
-先记录触发时间，再触发发送邮件：
-
-```bash
-NOT_BEFORE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-# 在这里触发目标服务发送验证码
-```
-
-调用：
-
-```bash
-curl --fail-with-body \
-  --connect-timeout 5 \
-  --max-time 75 \
-  --get \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  -H "Accept: application/json" \
-  --data-urlencode "not_before=${NOT_BEFORE}" \
-  --data-urlencode "wait_seconds=30" \
-  'https://2fa.077.li/api/v1/codes/outlook_primary'
-```
-
-### 5.3 FlySMS
-
-```bash
-curl --fail-with-body \
-  --connect-timeout 5 \
-  --max-time 75 \
-  --get \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  -H "Accept: application/json" \
-  --data-urlencode "not_before=${NOT_BEFORE}" \
-  --data-urlencode "wait_seconds=30" \
-  'https://2fa.077.li/api/v1/codes/icloud_pickup'
-```
-
-FlySMS 来源标记为 `experimental`。其上游冷同步可能较慢或暂时不可用，调用方必须正确处理 `502`、`503` 和 `504`，不能把上游失败当作“验证码为空”。
-
-## 6. Python 异步客户端示例
+## 8. Python 异步客户端
 
 依赖：
 
@@ -276,6 +226,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -284,131 +235,121 @@ API_TOKEN = os.environ["CODERELAY_API_TOKEN"]
 
 
 class CodeRelayError(RuntimeError):
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        *,
-        status_code: int,
-        retryable: bool,
-        retry_after_seconds: int | None,
-    ) -> None:
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.status_code = status_code
-        self.retryable = retryable
-        self.retry_after_seconds = retry_after_seconds
+    def __init__(self, *, status: int, payload: dict[str, Any]) -> None:
+        error = payload.get("error", {})
+        self.status = status
+        self.code = str(error.get("code", "UNKNOWN_ERROR"))
+        self.retryable = bool(error.get("retryable", False))
+        self.retry_after_seconds = error.get("retry_after_seconds")
+        self.credential_update = payload.get("credential_update")
+        super().__init__(self.code)
 
 
-async def get_code(
-    source_id: str,
+async def resolve_code(
     *,
+    type: str,
+    credential: str,
     not_before: datetime | None = None,
     wait_seconds: int = 30,
     min_ttl: int = 5,
-) -> str:
-    params: dict[str, str | int] = {
-        "wait_seconds": wait_seconds,
-        "min_ttl": min_ttl,
-    }
-    if not_before is not None:
-        if not_before.tzinfo is None:
-            raise ValueError("not_before must be timezone-aware")
-        params["not_before"] = not_before.astimezone(UTC).isoformat().replace("+00:00", "Z")
+) -> tuple[str, dict[str, str] | None]:
+    body: dict[str, Any] = {"type": type, "credential": credential}
+    if type == "totp":
+        body["min_ttl"] = min_ttl
+    else:
+        body["wait_seconds"] = wait_seconds
+        if not_before is not None:
+            if not_before.tzinfo is None:
+                raise ValueError("not_before must include a timezone")
+            body["not_before"] = not_before.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
-    timeout = httpx.Timeout(75.0, connect=5.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        response = await client.get(
-            f"{BASE_URL}/api/v1/codes/{source_id}",
-            params=params,
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(75.0, connect=5.0),
+        follow_redirects=False,
+    ) as client:
+        response = await client.post(
+            f"{BASE_URL}/api/v1/code",
+            json=body,
             headers={
                 "Authorization": f"Bearer {API_TOKEN}",
                 "Accept": "application/json",
             },
         )
 
-    payload = response.json()
-    if response.status_code == 200:
-        code = payload.get("code")
-        if not isinstance(code, str) or len(code) != 6 or not code.isdigit():
-            raise RuntimeError("CodeRelay returned an invalid success payload")
-        return code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"CodeRelay returned non-JSON HTTP {response.status_code}") from exc
 
-    error = payload.get("error", {}) if isinstance(payload, dict) else {}
-    raise CodeRelayError(
-        str(error.get("code", "UNKNOWN_ERROR")),
-        str(error.get("message", "CodeRelay request failed")),
-        status_code=response.status_code,
-        retryable=bool(error.get("retryable", False)),
-        retry_after_seconds=error.get("retry_after_seconds"),
-    )
+    # 即使失败也可能需要持久化 Outlook token 轮换。
+    credential_update = payload.get("credential_update") if isinstance(payload, dict) else None
+    if response.status_code != 200:
+        raise CodeRelayError(status=response.status_code, payload=payload)
 
-
-async def example() -> str:
-    # 必须先记录时间，再触发发送验证码。
-    triggered_at = datetime.now(UTC)
-    await trigger_remote_verification_email()
-    return await get_code(
-        "outlook_primary",
-        not_before=triggered_at,
-        wait_seconds=30,
-    )
+    code = payload.get("code")
+    if not isinstance(code, str) or len(code) != 6 or not code.isdigit():
+        raise RuntimeError("CodeRelay returned an invalid success payload")
+    return code, credential_update
 ```
 
-安全要求：不要用 `logger.info(payload)`、`print(response.text)` 等方式记录成功响应。
+调用项目在收到 `credential_update` 后，应先完成原子 secret 更新，再继续后续业务。
 
-## 7. JavaScript / TypeScript 示例
+禁止：
 
-适用于 Node.js 20+：
+```python
+logger.info(response.text)
+logger.info(body)
+print(credential)
+```
+
+日志只记录 HTTP 状态、错误码、`request_id` 和耗时。
+
+## 9. Node.js 20+ 客户端
 
 ```javascript
 const baseUrl = (process.env.CODERELAY_BASE_URL ?? "https://2fa.077.li").replace(/\/$/, "");
 const apiToken = process.env.CODERELAY_API_TOKEN;
 
-if (!apiToken) {
-  throw new Error("CODERELAY_API_TOKEN is required");
-}
+export async function resolveCode(body) {
+  if (!apiToken) throw new Error("CODERELAY_API_TOKEN is required");
 
-export async function getCode(sourceId, { notBefore, waitSeconds = 30, minTtl = 5 } = {}) {
-  const url = new URL(`/api/v1/codes/${encodeURIComponent(sourceId)}`, baseUrl);
-  url.searchParams.set("wait_seconds", String(waitSeconds));
-  url.searchParams.set("min_ttl", String(minTtl));
-  if (notBefore) {
-    url.searchParams.set("not_before", notBefore.toISOString());
-  }
-
-  const response = await fetch(url, {
-    method: "GET",
+  const response = await fetch(`${baseUrl}/api/v1/code`, {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${apiToken}`,
       Accept: "application/json",
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify(body),
     redirect: "error",
     signal: AbortSignal.timeout(75_000),
   });
 
   const payload = await response.json();
-  if (response.ok) {
-    if (!/^\d{6}$/.test(payload.code)) {
-      throw new Error("CodeRelay returned an invalid success payload");
-    }
-    return payload.code;
+  const credentialUpdate = payload?.credential_update ?? null;
+
+  if (!response.ok) {
+    const error = new Error(payload?.error?.code ?? `HTTP_${response.status}`);
+    error.statusCode = response.status;
+    error.code = payload?.error?.code;
+    error.retryable = payload?.error?.retryable === true;
+    error.retryAfterSeconds = payload?.error?.retry_after_seconds ?? null;
+    error.credentialUpdate = credentialUpdate;
+    throw error;
   }
 
-  const error = new Error(payload?.error?.code ?? `HTTP_${response.status}`);
-  error.statusCode = response.status;
-  error.code = payload?.error?.code;
-  error.retryable = payload?.error?.retryable === true;
-  error.retryAfterSeconds = payload?.error?.retry_after_seconds ?? null;
-  throw error;
+  if (!/^\d{6}$/.test(payload.code)) {
+    throw new Error("CodeRelay returned an invalid success payload");
+  }
+  return { code: payload.code, credentialUpdate };
 }
 ```
 
-服务端项目不得把 API Token 下发给浏览器。上述代码应运行在受控的后端进程中。
+此代码只能运行在受控后端，不能把 CodeRelay Token 或上游 credential 下发给浏览器。
 
-## 8. 错误处理
+## 10. 错误处理
 
-统一错误响应：
+统一错误主体：
 
 ```json
 {
@@ -422,33 +363,47 @@ export async function getCode(sourceId, { notBefore, waitSeconds = 30, minTtl = 
 }
 ```
 
-| HTTP | 错误码 | 调用方行为 |
+| HTTP | 错误码 | 行为 |
 |---:|---|---|
-| 401 | `AUTHENTICATION_REQUIRED` | 不自动重试；检查 Token、域名和 Authorization 头 |
+| 401 | `AUTHENTICATION_REQUIRED` | 不重试；检查 CodeRelay Token |
 | 404 | `NO_FRESH_CODE` | 可按 `retry_after_seconds` 有限重试 |
-| 404 | `SOURCE_NOT_FOUND` / `SOURCE_DISABLED` | 不重试；检查 source ID 或联系管理员 |
-| 409 | `AMBIGUOUS_CODE` | 不要随机选码；联系管理员调整提取规则 |
-| 422 | `VALIDATION_ERROR` / `HTTP_ERROR` | 不重试；修正请求参数 |
-| 424 | `SOURCE_CREDENTIALS_INVALID` | 不重试；通知管理员更新上游凭据 |
-| 424 | `SOURCE_REAUTH_REQUIRED` | 不重试；通知管理员重新导入 Outlook 凭据 |
-| 424 | `SOURCE_EXPIRED_OR_DISABLED` | 不重试；通知管理员检查 FlySMS 权益 |
-| 429 | `RATE_LIMITED` / `SOURCE_RATE_LIMITED` | 尊重 `Retry-After` 后重试 |
-| 502 | `UPSTREAM_FAILURE` / `UPSTREAM_SCHEMA_CHANGED` | 仅在 `retryable=true` 时有限重试；格式变化需管理员处理 |
+| 409 | `AMBIGUOUS_CODE` | 不要随机选码；联系管理员调整规则 |
+| 422 | `VALIDATION_ERROR` / `INVALID_CODE_REQUEST` | 不重试；修正 JSON 或 credential 格式 |
+| 424 | `SOURCE_CREDENTIALS_INVALID` | 不重试；替换请求级上游凭据 |
+| 424 | `SOURCE_REAUTH_REQUIRED` | 不重试；重新获得 Outlook refresh token |
+| 424 | `SOURCE_EXPIRED_OR_DISABLED` | 不重试；检查 FlySMS 权益 |
+| 429 | `RATE_LIMITED` / `SOURCE_RATE_LIMITED` | 尊重 `Retry-After` |
+| 502 | `UPSTREAM_FAILURE` | 有限指数退避 |
+| 502 | `UPSTREAM_SCHEMA_CHANGED` | 不盲目重试；通知维护者 |
 | 503 | `SOURCE_SYNCING` | 按 `Retry-After` 重试 |
-| 504 | `UPSTREAM_TIMEOUT` | 指数退避后有限重试 |
+| 504 | `UPSTREAM_TIMEOUT` | 有限指数退避 |
 
-推荐重试原则：
+任何响应都应先处理可选 `credential_update`。
 
-- 优先让单次请求使用 `wait_seconds=30`，不要每秒轮询；
-- 最多重试 2～3 次；
-- 尊重 HTTP `Retry-After` 或 JSON `retry_after_seconds`；
-- 无提示时可使用 2 秒、5 秒的指数退避；
-- 401、409、422、424 不应自动无限重试；
-- 日志只记录错误码、HTTP 状态、`request_id` 和耗时，不记录 Token、验证码或完整响应体。
+推荐最多重试 2～3 次。不要无限重试 401、409、422 或 424。
 
-## 9. API Token 签发与轮换（管理员）
+## 11. 响应与日志安全
 
-建议每个调用项目签发独立 Token。例如：
+所有 API 响应包含：
+
+```http
+Cache-Control: no-store, private
+Pragma: no-cache
+X-Content-Type-Options: nosniff
+```
+
+调用项目必须：
+
+- 禁止缓存成功响应；
+- 禁止记录请求 body；
+- 禁止记录成功 response body；
+- 禁止在错误日志中序列化异常附带的 `credential_update`；
+- 禁止将验证码用于指标 label；
+- 只在业务所需的最短时间内保留验证码。
+
+## 12. 管理员签发 Token
+
+每个项目一把：
 
 ```bash
 sudo -u coderelay /usr/local/bin/coderelay \
@@ -456,9 +411,7 @@ sudo -u coderelay /usr/local/bin/coderelay \
   --hash-file /etc/coderelay/secrets/api-project-a.sha256
 ```
 
-服务器端只保存 Token 的 SHA-256 hash。明文 Token 只显示一次，应直接保存进消费项目的 secret manager。
-
-在 `/etc/coderelay/config.toml` 中列出允许的 Token hash 文件：
+配置：
 
 ```toml
 [security]
@@ -468,53 +421,28 @@ api_token_hash_files = [
 ]
 ```
 
-安全轮换流程：
+轮换步骤：
 
 ```text
-1. 新增一个 Token hash 文件
+1. 新增新 Token hash
 2. 重启 CodeRelay
-3. 将新 Token 配置到消费项目
-4. 验证新 Token 可以调用
-5. 从配置中删除旧 hash 文件
-6. 再次重启 CodeRelay
+3. 更新消费项目
+4. 验证新 Token
+5. 删除旧 hash
+6. 再次重启
 ```
 
-不要覆盖旧 hash 后同时要求消费项目瞬间切换，否则会造成不必要的停机窗口。
+## 13. 上线验收
 
-## 10. 生产域名配置检查
+从真实消费项目所在机器验证：
 
-CodeRelay 应保持只监听本机：
-
-```toml
-[server]
-host = "127.0.0.1"
-port = 8787
-allowed_hosts = ["2fa.077.li", "localhost", "127.0.0.1"]
-forwarded_allow_ips = "127.0.0.1"
-access_log = false
-```
-
-其他建议：
-
-```toml
-[security]
-cookie_secure = true
-strict_secret_permissions = true
-```
-
-公网只能通过现有 Caddy 的 HTTPS 入口访问 `2fa.077.li`，不得直接开放 `8787` 端口。
-
-## 11. 上线验收清单
-
-从实际消费项目所在机器执行：
-
-1. 无 Token 调用 `/api/v1/sources`，必须返回 `401`；
-2. 错误 Token 调用，必须返回 `401`；
-3. 正确 Token 调用 `/api/v1/sources`，必须返回 `200`；
-4. TOTP 获取返回 `200` 且 `code` 为六位数字；
-5. 触发一封新的 Outlook 验证码邮件；
-6. 带正确 `not_before` 调用并得到 `200`；
-7. 使用未来时间或未触发新邮件时不得返回旧验证码；
-8. 验证响应包含 `Cache-Control: no-store`；
-9. 检查消费项目和 CodeRelay 日志均无 Token、验证码和邮件正文；
-10. 确认 VPS 防火墙没有对公网开放 `8787`。
+1. 无 Token 的 POST 返回 401；
+2. URL 中携带 Token 仍返回 401；
+3. 正确 Bearer + TOTP 请求返回仅含 `code` 的 200 JSON；
+4. Outlook/FlySMS credential 只放 POST JSON body；
+5. `not_before` 可以阻止旧码；
+6. Outlook 轮换 token 能被调用项目原子保存；
+7. CodeRelay 重启后不存在任何上游 credential 文件；
+8. 服务日志、Caddy 日志和消费项目日志均无请求 body、验证码和 token；
+9. 响应包含 `Cache-Control: no-store`；
+10. VPS 只公开 443，不公开 8787。

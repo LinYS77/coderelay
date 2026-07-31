@@ -1,5 +1,6 @@
+# CodeRelay 0.3 is stateless: only CodeRelay's own API token hashes live on this server.
+# Callers send TOTP/Outlook/FlySMS credentials in each authenticated POST request.
 # All relative paths are resolved from this file's directory.
-# Every file referenced below as a secret must be mode 0600.
 
 [server]
 host = "127.0.0.1"
@@ -13,37 +14,14 @@ max_wait_seconds = 30
 http_connect_timeout_seconds = 5.0
 http_read_timeout_seconds = 20.0
 http_max_connections = 20
+max_concurrent_code_requests = 10
 
 [security]
-api_token_hash_files = ["secrets/api-token.sha256"]
-ui_password_hash_file = "secrets/ui-password.argon2"
-session_secret_file = "secrets/session.key"
-session_cookie_name = "coderelay_session"
-session_hours = 8
-cookie_secure = true
+api_token_hash_files = ["secrets/api-project-a.sha256"]
 strict_secret_permissions = true
 api_rate_limit_per_minute = 60
-login_rate_limit_per_minute = 5
-login_global_rate_limit_per_minute = 30
 
-[[sources]]
-id = "primary_totp"
-type = "totp"
-display_name = "Primary TOTP"
-enabled = true
-secret_file = "secrets/primary-totp.secret"
-algorithm = "SHA1"
-period_seconds = 30
-digits = 6
-default_min_ttl_seconds = 5
-
-[[sources]]
-id = "outlook_primary"
-type = "outlook_imap"
-display_name = "Outlook"
-enabled = true
-credential_file = "data/outlook-credential.enc"
-credential_key_file = "secrets/outlook-credential.key"
+[providers.outlook]
 token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 imap_host = "outlook.office365.com"
 imap_port = 993
@@ -52,33 +30,26 @@ poll_interval_seconds = 2.0
 max_messages = 10
 max_message_bytes = 262144
 
-[sources.extractor]
+[providers.outlook.extractor]
 sender_domains = []
 subject_keywords = ["verification", "security code", "验证码"]
 patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']
 max_age_seconds = 600
 allow_generic_fallback = true
-# Set to true after adding reliable sender/pattern rules for your mailbox.
 generic_requires_keyword = false
 max_text_chars = 100000
 
-[[sources]]
-id = "icloud_pickup"
-type = "flysms"
-display_name = "iCloud Pickup"
-enabled = true
-email_file = "secrets/flysms-email"
-token_file = "secrets/flysms-token"
+[providers.flysms]
 base_url = "https://flysms.xyz/icloud/api/pickup/messages"
 poll_interval_seconds = 2.0
 history_limit = 30
 max_detail_messages = 5
 
-[sources.extractor]
+[providers.flysms.extractor]
 sender_domains = []
 subject_keywords = ["verification", "security code", "验证码"]
 patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']
 max_age_seconds = 600
 allow_generic_fallback = true
-generic_requires_keyword = true
+generic_requires_keyword = false
 max_text_chars = 100000

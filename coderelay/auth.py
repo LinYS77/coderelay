@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from fastapi import Request
 
 from coderelay.container import AppContainer
 from coderelay.domain.errors import AuthenticationRequired, RequestRateLimited
-from coderelay.security import SessionClaims, principal_fingerprint, verify_api_token
+from coderelay.security import principal_fingerprint, verify_api_token
 
 
 @dataclass(frozen=True, slots=True)
 class Principal:
-    kind: str
     identifier: str
-    session: SessionClaims | None = None
 
 
 def get_container(request: Request) -> AppContainer:
@@ -33,17 +30,11 @@ async def require_auth(request: Request) -> Principal:
     principal: Principal | None = None
     if authorization:
         scheme, separator, token = authorization.partition(" ")
-        if (
-            separator
-            and scheme.casefold() == "bearer"
-            and verify_api_token(token.strip(), container.security.api_token_hashes)
-        ):
-            principal = Principal(kind="api", identifier=principal_fingerprint(token.strip()))
-    else:
-        cookie = request.cookies.get(container.config.security.session_cookie_name, "")
-        claims = container.security.session_signer.verify(cookie)
-        if claims is not None:
-            principal = Principal(kind="session", identifier=claims.nonce, session=claims)
+        token = token.strip()
+        if separator and scheme.casefold() == "bearer" and verify_api_token(token, container.security.api_token_hashes):
+            principal = Principal(identifier=principal_fingerprint(token))
+        token = ""
+
     limit = container.config.security.api_rate_limit_per_minute
     ip = client_ip(request)
     ip_retry = await container.rate_limiter.check(f"api:ip:{ip}", limit=limit)
@@ -56,26 +47,3 @@ async def require_auth(request: Request) -> Principal:
     if principal_retry:
         raise RequestRateLimited(retry_after_seconds=principal_retry)
     return principal
-
-
-async def require_session(request: Request) -> Principal:
-    container = get_container(request)
-    cookie = request.cookies.get(container.config.security.session_cookie_name, "")
-    claims = container.security.session_signer.verify(cookie)
-    if claims is None:
-        raise AuthenticationRequired()
-    return Principal(kind="session", identifier=claims.nonce, session=claims)
-
-
-def origin_is_allowed(request: Request) -> bool:
-    origin = request.headers.get("Origin")
-    if not origin:
-        return True
-    try:
-        parsed = urlparse(origin)
-    except ValueError:
-        return False
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        return False
-    request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
-    return origin.rstrip("/") == request_origin

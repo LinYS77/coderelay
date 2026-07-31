@@ -8,12 +8,11 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from coderelay.config import OutlookImapSourceSettings
+from coderelay.config import OutlookProviderSettings
+from coderelay.domain.credentials import OutlookCredential
 from coderelay.domain.errors import SourceReauthRequired
-from coderelay.domain.models import CodeRequest, SourceState
-from coderelay.infra.credential_store import EncryptedOutlookCredentialStore, OutlookCredential
+from coderelay.domain.models import CodeRequest
 from coderelay.providers.outlook_imap import OutlookImapProvider, _extract_message_content, _parse_internal_date
-from coderelay.security import generate_key_material
 
 CLIENT_ID = "11111111-2222-4333-8444-555555555555"
 REFRESH_TOKEN = "M." + "a" * 240
@@ -69,29 +68,19 @@ def raw_verification_email() -> bytes:
 
 
 @pytest.fixture
-def outlook_settings(secret_writer, tmp_path) -> OutlookImapSourceSettings:
-    key_file = secret_writer("outlook.key", generate_key_material())
-    credential_file = tmp_path / "outlook.enc"
-    store = EncryptedOutlookCredentialStore(
-        credential_file,
-        key_file,
-        source_id="outlook_test",
-        strict_permissions=True,
-    )
-    store.save(OutlookCredential("user@example.com", CLIENT_ID, REFRESH_TOKEN))
-    return OutlookImapSourceSettings(
-        id="outlook_test",
-        type="outlook_imap",
-        display_name="Outlook",
-        credential_file=credential_file,
-        credential_key_file=key_file,
-        extractor={"max_age_seconds": 86_400},
-    )
+def outlook_settings() -> OutlookProviderSettings:
+    return OutlookProviderSettings(extractor={"max_age_seconds": 86_400})
+
+
+@pytest.fixture
+def outlook_credential() -> OutlookCredential:
+    return OutlookCredential("user@example.com", CLIENT_ID, REFRESH_TOKEN)
 
 
 @pytest.mark.asyncio
-async def test_outlook_imap_returns_verification_code(
-    outlook_settings: OutlookImapSourceSettings,
+async def test_outlook_imap_returns_code_and_request_scoped_rotation(
+    outlook_settings: OutlookProviderSettings,
+    outlook_credential: OutlookCredential,
     raw_verification_email: bytes,
 ) -> None:
     token_requests = 0
@@ -119,64 +108,50 @@ async def test_outlook_imap_returns_verification_code(
         provider = OutlookImapProvider(
             outlook_settings,
             client,
-            strict_secret_permissions=True,
+            outlook_credential,
             imap_factory=lambda *args, **kwargs: fake_imap,
             now=lambda: NOW,
         )
-        result = await provider.fetch_code(
-            CodeRequest(
-                source_id="outlook_test",
-                not_before=datetime(2026, 7, 30, 2, 59, tzinfo=UTC),
-            )
-        )
-        second = await provider.fetch_code(CodeRequest(source_id="outlook_test"))
+        result = await provider.fetch_code(CodeRequest(not_before=datetime(2026, 7, 30, 2, 59, tzinfo=UTC)))
+        second = await provider.fetch_code(CodeRequest())
+        update = provider.credential_update
+        provider.close()
 
     assert result is not None and result.code == "123456"
     assert second is not None and second.code == "123456"
-    assert result.evidence["subject"] == "Your verification code ••••••"
     assert fake_imap.readonly is True
     assert fake_imap.logged_out is True
-    assert token_requests == 1  # access token is cached in memory
-
-    store = EncryptedOutlookCredentialStore(
-        outlook_settings.credential_file,
-        outlook_settings.credential_key_file,
-        source_id="outlook_test",
-        strict_permissions=True,
-    )
-    assert store.load().refresh_token == ROTATED_TOKEN
+    assert token_requests == 1
+    assert update is not None and update.refresh_token == ROTATED_TOKEN
+    assert provider.credential_update is None
 
 
 @pytest.mark.asyncio
 async def test_outlook_imap_respects_not_before(
-    outlook_settings: OutlookImapSourceSettings,
+    outlook_settings: OutlookProviderSettings,
+    outlook_credential: OutlookCredential,
     raw_verification_email: bytes,
 ) -> None:
     def token_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={"access_token": ACCESS_TOKEN, "expires_in": 3600, "scope": IMAP_SCOPE},
-        )
+        return httpx.Response(200, json={"access_token": ACCESS_TOKEN, "expires_in": 3600, "scope": IMAP_SCOPE})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(token_handler)) as client:
         provider = OutlookImapProvider(
             outlook_settings,
             client,
-            strict_secret_permissions=True,
+            outlook_credential,
             imap_factory=lambda *args, **kwargs: FakeImap(raw_verification_email),
             now=lambda: NOW,
         )
-        result = await provider.fetch_code(
-            CodeRequest(
-                source_id="outlook_test",
-                not_before=datetime(2026, 7, 30, 3, 1, tzinfo=UTC),
-            )
-        )
+        result = await provider.fetch_code(CodeRequest(not_before=datetime(2026, 7, 30, 3, 1, tzinfo=UTC)))
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_outlook_invalid_grant_requires_reimport(outlook_settings: OutlookImapSourceSettings) -> None:
+async def test_outlook_invalid_grant_requires_new_credential(
+    outlook_settings: OutlookProviderSettings,
+    outlook_credential: OutlookCredential,
+) -> None:
     def token_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": "invalid_grant", "error_codes": [70000]})
 
@@ -184,30 +159,12 @@ async def test_outlook_invalid_grant_requires_reimport(outlook_settings: Outlook
         provider = OutlookImapProvider(
             outlook_settings,
             client,
-            strict_secret_permissions=True,
+            outlook_credential,
             imap_factory=lambda *args, **kwargs: None,
             now=lambda: NOW,
         )
         with pytest.raises(SourceReauthRequired):
-            await provider.fetch_code(CodeRequest(source_id="outlook_test"))
-
-
-@pytest.mark.asyncio
-async def test_outlook_status_is_ready_and_masked(
-    outlook_settings: OutlookImapSourceSettings,
-    raw_verification_email: bytes,
-) -> None:
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500))) as client:
-        provider = OutlookImapProvider(
-            outlook_settings,
-            client,
-            strict_secret_permissions=True,
-            imap_factory=lambda *args, **kwargs: FakeImap(raw_verification_email),
-            now=lambda: NOW,
-        )
-        status = provider.status()
-    assert status.state == SourceState.READY
-    assert status.identity_hint == "us***@example.com"
+            await provider.fetch_code(CodeRequest())
 
 
 @pytest.mark.parametrize(

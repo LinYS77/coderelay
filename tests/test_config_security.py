@@ -6,31 +6,23 @@ from pathlib import Path
 import pytest
 
 from coderelay.config import AppConfig, ConfigError, load_config
-from coderelay.security import (
-    SecretFileError,
-    SessionSigner,
-    decode_key_material,
-    generate_api_token,
-    generate_key_material,
-    hash_api_token,
-    hash_ui_password,
-    read_secret,
-    verify_api_token,
-    verify_ui_password,
-)
+from coderelay.security import SecretFileError, generate_api_token, hash_api_token, read_secret, verify_api_token
 
 
-def test_example_config_parses_and_resolves_paths() -> None:
+def test_example_config_is_stateless_and_resolves_only_api_hashes() -> None:
     config = load_config("config.example.toml")
-    assert [source.type for source in config.sources] == ["totp", "outlook_imap", "flysms"]
     assert config.security.api_token_hash_files[0].is_absolute()
-    assert config.sources[0].id == "primary_totp"
+    assert config.providers.outlook.imap_host == "outlook.office365.com"
+    assert config.providers.flysms.base_url == "https://flysms.xyz/icloud/api/pickup/messages"
+    assert not hasattr(config, "sources")
+    assert not hasattr(config.security, "ui_password_hash_file")
+    assert not hasattr(config.security, "session_secret_file")
 
 
-def test_config_rejects_duplicate_source_ids(app_config: AppConfig) -> None:
+def test_config_rejects_legacy_persisted_sources(app_config: AppConfig) -> None:
     payload = app_config.model_dump(exclude={"config_path"})
-    payload["sources"].append(payload["sources"][0].copy())
-    with pytest.raises(ValueError, match="unique"):
+    payload["sources"] = [{"type": "totp", "secret_file": "secret"}]
+    with pytest.raises(ValueError, match="Extra inputs"):
         AppConfig.model_validate(payload)
 
 
@@ -38,6 +30,13 @@ def test_config_rejects_wildcard_host(app_config: AppConfig) -> None:
     payload = app_config.model_dump(exclude={"config_path"})
     payload["server"]["allowed_hosts"] = ["*"]
     with pytest.raises(ValueError, match="cannot be blank"):
+        AppConfig.model_validate(payload)
+
+
+def test_config_rejects_runtime_upstream_override(app_config: AppConfig) -> None:
+    payload = app_config.model_dump(exclude={"config_path"})
+    payload["providers"]["flysms"]["base_url"] = "https://attacker.example/messages"
+    with pytest.raises(ValueError):
         AppConfig.model_validate(payload)
 
 
@@ -55,29 +54,6 @@ def test_api_token_hash_and_verification() -> None:
     assert verify_api_token(token, [stored])
     assert not verify_api_token(token + "x", [stored])
     assert not verify_api_token("", [stored])
-
-
-def test_ui_password_is_argon2id() -> None:
-    encoded = hash_ui_password("a sufficiently long password")
-    assert encoded.startswith("$argon2id$")
-    assert verify_ui_password("a sufficiently long password", encoded)
-    assert not verify_ui_password("wrong password", encoded)
-
-
-def test_password_minimum_length() -> None:
-    with pytest.raises(ValueError, match="14"):
-        hash_ui_password("too short")
-
-
-def test_session_signer_expiry() -> None:
-    key = decode_key_material(generate_key_material())
-    signer = SessionSigner(key, lifetime_seconds=60)
-    token = signer.issue(now=1_000)
-    claims = signer.verify(token, now=1_030)
-    assert claims is not None
-    assert claims.expires_at == 1_060
-    assert signer.verify(token, now=1_060) is None
-    assert signer.verify(token + "tampered", now=1_030) is None
 
 
 def test_secret_file_permission_check(tmp_path: Path) -> None:

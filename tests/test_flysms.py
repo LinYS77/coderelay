@@ -5,33 +5,33 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-from coderelay.config import FlySmsSourceSettings
+from coderelay.config import FlySmsProviderSettings
+from coderelay.domain.credentials import FlySmsCredential
 from coderelay.domain.errors import SourceRateLimited, UpstreamSchemaChanged
 from coderelay.domain.models import CodeRequest
 from coderelay.providers.flysms import FlySmsProvider
 
 
 @pytest.fixture
-def fly_settings(secret_writer) -> FlySmsSourceSettings:
-    email = secret_writer("fly-email", "box@example.com")
-    token = secret_writer("fly-token", "tok_test_token_123")
-    return FlySmsSourceSettings(
-        id="fly_test",
-        type="flysms",
-        display_name="Fly",
-        email_file=email,
-        token_file=token,
-        base_url="https://flysms.example/icloud/api/pickup/messages",
-    )
+def fly_settings() -> FlySmsProviderSettings:
+    return FlySmsProviderSettings()
+
+
+@pytest.fixture
+def fly_credential() -> FlySmsCredential:
+    return FlySmsCredential(email="box@example.com", token="tok_test_token_123456")
 
 
 @pytest.mark.asyncio
-async def test_flysms_latest_message(fly_settings: FlySmsSourceSettings) -> None:
+async def test_flysms_latest_message(
+    fly_settings: FlySmsProviderSettings,
+    fly_credential: FlySmsCredential,
+) -> None:
     received = datetime.now(UTC) - timedelta(seconds=2)
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/latest")
-        assert request.headers["Authorization"] == "Bearer tok_test_token_123"
+        assert request.headers["Authorization"] == "Bearer tok_test_token_123456"
         assert request.headers["X-Mailbox-Email"] == "box@example.com"
         return httpx.Response(
             200,
@@ -52,18 +52,20 @@ async def test_flysms_latest_message(fly_settings: FlySmsSourceSettings) -> None
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        provider = FlySmsProvider(fly_settings, client, strict_secret_permissions=True)
-        result = await provider.fetch_code(
-            CodeRequest(source_id="fly_test", not_before=received - timedelta(seconds=1))
-        )
+        provider = FlySmsProvider(fly_settings, client, fly_credential)
+        result = await provider.fetch_code(CodeRequest(not_before=received - timedelta(seconds=1)))
+        provider.close()
     assert result is not None
     assert result.code == "123456"
-    assert result.evidence["message_fingerprint"].startswith("sha256:")
-    assert result.evidence["subject"] == "Your verification code"
+    assert provider._email == ""
+    assert provider._token == ""
 
 
 @pytest.mark.asyncio
-async def test_flysms_history_fallback(fly_settings: FlySmsSourceSettings) -> None:
+async def test_flysms_history_fallback(
+    fly_settings: FlySmsProviderSettings,
+    fly_credential: FlySmsCredential,
+) -> None:
     received = datetime.now(UTC) - timedelta(seconds=2)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -92,25 +94,31 @@ async def test_flysms_history_fallback(fly_settings: FlySmsSourceSettings) -> No
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        provider = FlySmsProvider(fly_settings, client, strict_secret_permissions=True)
-        result = await provider.fetch_code(CodeRequest(source_id="fly_test"))
+        provider = FlySmsProvider(fly_settings, client, fly_credential)
+        result = await provider.fetch_code(CodeRequest())
     assert result is not None and result.code == "654321"
 
 
 @pytest.mark.asyncio
-async def test_flysms_honors_retry_after(fly_settings: FlySmsSourceSettings) -> None:
+async def test_flysms_honors_retry_after(
+    fly_settings: FlySmsProviderSettings,
+    fly_credential: FlySmsCredential,
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "17"}, json={"error": "limited"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        provider = FlySmsProvider(fly_settings, client, strict_secret_permissions=True)
+        provider = FlySmsProvider(fly_settings, client, fly_credential)
         with pytest.raises(SourceRateLimited) as caught:
-            await provider.fetch_code(CodeRequest(source_id="fly_test"))
+            await provider.fetch_code(CodeRequest())
     assert caught.value.retry_after_seconds == 17
 
 
 @pytest.mark.asyncio
-async def test_flysms_rejects_mismatched_mailbox(fly_settings: FlySmsSourceSettings) -> None:
+async def test_flysms_rejects_mismatched_mailbox(
+    fly_settings: FlySmsProviderSettings,
+    fly_credential: FlySmsCredential,
+) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -122,6 +130,6 @@ async def test_flysms_rejects_mismatched_mailbox(fly_settings: FlySmsSourceSetti
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        provider = FlySmsProvider(fly_settings, client, strict_secret_permissions=True)
+        provider = FlySmsProvider(fly_settings, client, fly_credential)
         with pytest.raises(UpstreamSchemaChanged):
-            await provider.fetch_code(CodeRequest(source_id="fly_test"))
+            await provider.fetch_code(CodeRequest())

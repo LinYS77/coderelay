@@ -4,6 +4,7 @@ import asyncio
 import imaplib
 import re
 import ssl
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -15,9 +16,9 @@ from typing import Any
 
 import httpx
 
-from coderelay.config import OutlookImapSourceSettings
+from coderelay.config import OutlookProviderSettings
+from coderelay.domain.credentials import CredentialError, OutlookCredential
 from coderelay.domain.errors import (
-    ConfigurationFailure,
     SourceCredentialsInvalid,
     SourceRateLimited,
     SourceReauthRequired,
@@ -26,15 +27,9 @@ from coderelay.domain.errors import (
     UpstreamTimeout,
 )
 from coderelay.domain.extractor import CodeExtractor
-from coderelay.domain.models import CodeRequest, MailMessage, ProviderCode, SourceKind, SourceState, SourceStatus
-from coderelay.infra.credential_store import (
-    CredentialStoreError,
-    EncryptedOutlookCredentialStore,
-    OutlookCredential,
-)
+from coderelay.domain.models import CodeRequest, CredentialUpdate, MailMessage, ProviderCode
 from coderelay.providers.base import CodeProvider
 from coderelay.providers.http_utils import bounded_json, parse_retry_after
-from coderelay.security import mask_email
 
 _IMAP_SCOPE = "https://outlook.office.com/imap.accessasuser.all"
 _UID_RE = re.compile(rb"\bUID\s+(\d+)\b")
@@ -50,34 +45,27 @@ class OutlookImapProvider(CodeProvider):
 
     def __init__(
         self,
-        settings: OutlookImapSourceSettings,
+        settings: OutlookProviderSettings,
         client: httpx.AsyncClient,
+        credential: OutlookCredential,
         *,
-        strict_secret_permissions: bool,
         imap_factory: Callable[..., Any] | None = None,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings
-        self.id = settings.id
-        self.display_name = settings.display_name
         self.poll_interval_seconds = settings.poll_interval_seconds
         self._client = client
         self._extractor = CodeExtractor(settings.extractor)
-        self._store = EncryptedOutlookCredentialStore(
-            settings.credential_file,
-            settings.credential_key_file,
-            source_id=settings.id,
-            strict_permissions=strict_secret_permissions,
-        )
-        try:
-            self._credential = self._store.load()
-        except CredentialStoreError as exc:
-            raise ConfigurationFailure(str(exc)) from exc
+        self._credential: OutlookCredential | None = credential
+        self._credential_update: CredentialUpdate | None = None
         self._imap_factory = imap_factory or imaplib.IMAP4_SSL
         self._now = now or (lambda: datetime.now(UTC))
         self._token_lock = asyncio.Lock()
         self._access_token: str | None = None
         self._access_token_expires_at = 0.0
+        self._imap_guard = threading.Lock()
+        self._active_imap: Any | None = None
+        self._closed = False
 
     async def fetch_code(self, request: CodeRequest) -> ProviderCode | None:
         access_token = await self._get_access_token()
@@ -97,38 +85,35 @@ class OutlookImapProvider(CodeProvider):
         if not extracted:
             return None
         return ProviderCode(
-            source_id=self.id,
-            kind=SourceKind.EMAIL,
             code=extracted.code,
             observed_at=now,
             received_at=extracted.message.received_at,
-            freshness="fresh",
-            evidence={
-                "sender": extracted.message.sender[:320],
-                "subject": extracted.redacted_subject,
-                "message_fingerprint": extracted.message_fingerprint,
-            },
         )
 
-    def status(self) -> SourceStatus:
-        return SourceStatus(
-            id=self.id,
-            display_name=self.display_name,
-            provider_type=self.provider_type,
-            kind=SourceKind.EMAIL,
-            state=SourceState.READY,
-            identity_hint=mask_email(self._credential.email),
-        )
+    @property
+    def credential_update(self) -> CredentialUpdate | None:
+        return self._credential_update
 
     def close(self) -> None:
+        self._closed = True
+        with self._imap_guard:
+            active_imap = self._active_imap
+        if active_imap is not None:
+            with suppress(Exception):
+                active_imap.shutdown()
         self._access_token = None
         self._access_token_expires_at = 0.0
+        self._credential = None
+        self._credential_update = None
 
     async def _get_access_token(self, *, force_refresh: bool = False) -> str:
         async with self._token_lock:
             if not force_refresh and self._access_token and time.monotonic() < self._access_token_expires_at:
                 return self._access_token
-            response = await self._request_access_token(self._credential)
+            credential = self._credential
+            if credential is None:
+                raise SourceCredentialsInvalid()
+            response = await self._request_access_token(credential)
             token = response.get("access_token")
             if not isinstance(token, str) or not token or len(token) > 131_072:
                 raise UpstreamSchemaChanged()
@@ -145,13 +130,13 @@ class OutlookImapProvider(CodeProvider):
             lifetime = min(86_400, max(60, lifetime))
 
             rotated = response.get("refresh_token")
-            if isinstance(rotated, str) and rotated and rotated != self._credential.refresh_token:
+            if isinstance(rotated, str) and rotated and rotated != credential.refresh_token:
                 try:
-                    updated = self._credential.with_refresh_token(rotated)
-                    self._store.save(updated, overwrite=True)
-                    self._credential = updated
-                except CredentialStoreError as exc:
-                    raise ConfigurationFailure("cannot persist rotated Outlook refresh token") from exc
+                    updated = credential.with_refresh_token(rotated)
+                except CredentialError as exc:
+                    raise UpstreamSchemaChanged() from exc
+                self._credential = updated
+                self._credential_update = CredentialUpdate(refresh_token=updated.refresh_token)
 
             self._access_token = token
             self._access_token_expires_at = time.monotonic() + max(30, lifetime - 60)
@@ -201,7 +186,16 @@ class OutlookImapProvider(CodeProvider):
                 ssl_context=ssl.create_default_context(),
                 timeout=self.settings.imap_timeout_seconds,
             )
-            authentication = (f"user={self._credential.email}\x01auth=Bearer {access_token}\x01\x01").encode()
+            with self._imap_guard:
+                if self._closed:
+                    with suppress(Exception):
+                        imap.shutdown()
+                    raise UpstreamFailure()
+                self._active_imap = imap
+            credential = self._credential
+            if credential is None:
+                raise SourceCredentialsInvalid()
+            authentication = (f"user={credential.email}\x01auth=Bearer {access_token}\x01\x01").encode()
             try:
                 imap.authenticate("XOAUTH2", lambda _: authentication)
             except imaplib.IMAP4.error as exc:
@@ -233,6 +227,9 @@ class OutlookImapProvider(CodeProvider):
             raise UpstreamFailure() from exc
         finally:
             if imap is not None:
+                with self._imap_guard:
+                    if self._active_imap is imap:
+                        self._active_imap = None
                 with suppress(Exception):
                     imap.logout()
 

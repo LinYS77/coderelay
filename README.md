@@ -2,310 +2,279 @@
 
 [![CI](https://github.com/LinYS77/coderelay/actions/workflows/ci.yml/badge.svg)](https://github.com/LinYS77/coderelay/actions/workflows/ci.yml)
 
-CodeRelay 是一个面向单用户的验证码聚合服务，当前只支持三类来源：
+CodeRelay 是一个单用户、API-only、无状态的验证码解析服务。调用项目在每次请求中提交本次上游凭据，CodeRelay 临时完成取码并返回 JSON，不在服务器持久化 TOTP、Outlook 或 FlySMS 凭据。
 
-1. 预配置 TOTP Secret，生成六位验证码；
-2. `email----password----client_id----refresh_token` Outlook 凭据，通过 OAuth + IMAP 读取验证码邮件；
-3. FlySMS iCloud 取件接口。
+支持：
 
-CodeRelay 不保存 Outlook 密码，不修改邮件，不把上游 token 或验证码写入正常日志，也不需要 Microsoft Graph 或 Microsoft App 注册。
+1. Base32 TOTP Secret 或 `otpauth://totp/...`；
+2. `email----password----client_id----refresh_token` Outlook 凭据；
+3. `email---token---https://flysms.xyz/icloud/pickup#...` FlySMS 凭据。
 
-## 安全提醒
-
-本服务保存的凭据具有很高权限。请：
-
-- 使用独立 Linux 用户运行；
-- 所有 secret 文件设置为 `0600`，目录设置为 `0700`；
-- 只监听 `127.0.0.1`，由服务器已有的 HTTPS 反向代理转发；
-- 不把 `config.toml`、`secrets/`、`data/` 提交到版本库；
-- 不在命令行参数、URL 或聊天中粘贴真实 secret；
-- 四段式 Outlook 凭据中的密码只用于兼容输入格式，导入后立即丢弃；
-- 已经公开过的 Outlook/FlySMS 凭据必须轮换。
-
-## 1. 构建单文件程序
-
-二进制必须在与目标 VPS **相同 CPU 架构、兼容或更旧 glibc** 的 Linux 环境构建。PyInstaller 不是跨平台编译器。
-
-```bash
-./scripts/build-binary.sh
-./dist/coderelay --version
-```
-
-产物：
+生产域名：
 
 ```text
-dist/coderelay
-dist/coderelay.sha256
+https://2fa.077.li
 ```
 
-校验构建产物：
+完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)。
 
-```bash
-(cd dist && sha256sum -c coderelay.sha256)
-```
-
-如果存在 `requirements.lock`，构建脚本会优先使用锁定依赖。
-
-## 2. 创建运行目录
-
-下面仅是示例路径：
-
-```bash
-install -d -m 700 /opt/coderelay/{secrets,data}
-install -m 755 dist/coderelay /opt/coderelay/coderelay
-install -m 600 config.example.toml /opt/coderelay/config.toml
-cd /opt/coderelay
-```
-
-修改 `config.toml` 中的域名、来源 ID 和提取规则。相对路径都以 `config.toml` 所在目录为基准。
-
-## 3. 生成本服务凭据
-
-### API Bearer Token
-
-```bash
-./coderelay generate-api-token --hash-file secrets/api-token.sha256
-```
-
-程序只显示一次明文 API Token。把它保存在调用方的 secret 管理中；服务端只保存 SHA-256 hash。
-
-### 网页密码
-
-```bash
-./coderelay hash-password --output secrets/ui-password.argon2
-```
-
-密码不会作为命令行参数出现。
-
-### Session 签名密钥
-
-```bash
-./coderelay generate-key --output secrets/session.key
-```
-
-## 4. 配置三类来源
-
-所有文件创建后执行：
-
-```bash
-chmod 600 secrets/*
-chmod 700 secrets data
-```
-
-### 4.1 TOTP
-
-`secret_file` 可以包含：
-
-- 一个 Base32 secret；或
-- 完整的 `otpauth://totp/...` URI。
-
-文件中只放 secret 本身和末尾换行。MVP 只允许六位 TOTP。
-
-### 4.2 Outlook 四段式凭据
-
-配置示例：
-
-```toml
-[[sources]]
-id = "outlook_primary"
-type = "outlook_imap"
-display_name = "Outlook"
-credential_file = "data/outlook-credential.enc"
-credential_key_file = "secrets/outlook-credential.key"
-token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-imap_host = "outlook.office365.com"
-imap_port = 993
-imap_timeout_seconds = 15.0
-poll_interval_seconds = 2.0
-max_messages = 10
-max_message_bytes = 262144
-```
-
-先生成加密密钥：
-
-```bash
-./coderelay generate-key --output secrets/outlook-credential.key
-```
-
-然后导入四段式凭据：
-
-```bash
-./coderelay outlook-import \
-  --config config.toml \
-  outlook_primary
-```
-
-CLI 会通过隐藏输入提示粘贴：
+## 核心边界
 
 ```text
-email----password----client_id----refresh_token
+有 CodeRelay Bearer Token 的调用项目
+        │ POST /api/v1/code（请求体携带本次上游凭据）
+        ▼
+CodeRelay
+        ├─ TOTP：本地计算
+        ├─ Outlook：OAuth refresh + readonly IMAP + BODY.PEEK
+        └─ FlySMS：固定 JSON API
+        │
+        ▼
+{"code":"123456"}
 ```
 
-也可以让受控的 secret manager 直接向标准输入写入一行：
+CodeRelay：
 
-```bash
-secret-manager-command | ./coderelay outlook-import \
-  --config config.toml \
-  --credential-stdin \
-  outlook_primary
+- 不把调用方上游凭据写入配置、文件或数据库；
+- 不跨请求缓存上游凭据、access token、refresh token、邮件或验证码；
+- 不记录请求正文、验证码或上游 token；
+- 请求结束时主动释放应用层凭据引用；
+- Outlook 密码字段只为兼容输入格式，解析后立即丢弃；
+- Microsoft 返回轮换 refresh token 时，只通过 `credential_update` 返回给调用方，不在服务器保存；
+- 只允许固定的 Microsoft、Outlook IMAP 和 FlySMS 上游地址，调用方不能指定任意 URL。
+
+“无状态”不表示凭据从未进入内存：HTTPS 解密、JSON 解析和上游调用期间，凭据不可避免地短暂存在于进程内存。Python 也不能承诺物理内存清零；本项目保证的是不持久化、不记录、不跨请求保留。
+
+## API
+
+所有取码请求必须使用：
+
+```http
+Authorization: Bearer <CODERELAY_API_TOKEN>
+Content-Type: application/json
 ```
 
-不要为了导入而在磁盘上新建明文 `credential.txt`。
+唯一取码端点：
 
-导入后：
-
-- password 字段不会保存；
-- email、client_id、refresh_token 保存在 AES-GCM 加密文件中；
-- Microsoft 返回新的 refresh token 时，服务会自动原子更新加密文件；
-- IMAP 使用 XOAUTH2；
-- Inbox 以 readonly 模式打开；
-- 邮件正文使用 `BODY.PEEK` 读取，不会标记已读。
-
-如果需要替换凭据，先停止服务：
-
-```bash
-./coderelay outlook-import \
-  --config config.toml \
-  --replace \
-  outlook_primary
+```http
+POST /api/v1/code
 ```
 
-### 4.3 FlySMS
+### TOTP
 
-分别将取件邮箱和 `tok_...` token 写入：
+```json
+{
+  "type": "totp",
+  "credential": "BASE32_SECRET",
+  "min_ttl": 5
+}
+```
+
+### Outlook
+
+```json
+{
+  "type": "outlook",
+  "credential": "email----password----client_id----refresh_token",
+  "not_before": "2026-07-31T03:00:00Z",
+  "wait_seconds": 30
+}
+```
+
+### FlySMS
+
+```json
+{
+  "type": "flysms",
+  "credential": "email---token---https://flysms.xyz/icloud/pickup#email=...&key=...",
+  "not_before": "2026-07-31T03:00:00Z",
+  "wait_seconds": 30
+}
+```
+
+成功：
+
+```json
+{"code":"123456"}
+```
+
+如果 Outlook 刷新时发生 token 轮换：
+
+```json
+{
+  "code": "123456",
+  "credential_update": {
+    "refresh_token": "new_refresh_token"
+  }
+}
+```
+
+调用方必须把新 refresh token 更新到自己的 secret manager。即使没有找到新验证码，错误 JSON 也可能携带 `credential_update`。
+
+`not_before` 建议在触发上游发送邮件之前记录，用于阻止旧验证码误匹配。
+
+旧版以下接口已删除：
 
 ```text
-secrets/flysms-email
-secrets/flysms-token
+GET /api/v1/sources
+GET /api/v1/codes/{source_id}
 ```
 
-不要保存完整的 `#email=...&key=...` URL。适配器直接使用请求头调用 JSON API，并将此来源标记为 `experimental`。FlySMS 冷同步可能需要数个上游请求；服务使用有限的 45 秒 Provider 预算和 20 秒单请求读取超时，超出后明确返回上游超时，不会无限挂起。
+## 服务鉴权
 
-## 5. 校验并启动
+CodeRelay 自身只保存调用项目 API Token 的 SHA-256 hash。建议每个消费项目一把独立 Token：
 
 ```bash
-./coderelay validate-config --config config.toml
-./coderelay serve --config config.toml
+./coderelay generate-api-token \
+  --hash-file secrets/api-project-a.sha256
 ```
 
-默认监听：
+明文 Token 只显示一次，应放进消费项目的 secret manager。Token 只能通过 `Authorization` 请求头发送，不能放入 URL。
 
-```text
-127.0.0.1:8787
-```
-
-生产环境必须由现有 HTTPS 反向代理访问。`forwarded_allow_ips` 默认只信任本机 `127.0.0.1` 的代理头。
-
-健康检查：
+以下健康端点公开，但不返回任何来源、邮箱或验证码信息：
 
 ```text
 GET /health/live
 GET /health/ready
 ```
 
-## 6. API
+## 配置
 
-提供给其他项目的完整鉴权、超时、错误处理和多语言调用说明见 [`docs/API调用指南.md`](docs/API调用指南.md)。生产域名为 `https://2fa.077.li`。
-
-### 来源列表
+复制示例：
 
 ```bash
-curl --fail-with-body \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  https://2fa.077.li/api/v1/sources
+install -m 600 config.example.toml config.toml
+mkdir -p secrets
+chmod 700 secrets
 ```
 
-### TOTP
-
-```bash
-curl --fail-with-body \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  'https://2fa.077.li/api/v1/codes/primary_totp?min_ttl=5'
-```
-
-### Outlook 或 FlySMS 邮件验证码
-
-调用方应在触发上游发送验证码时记录 UTC 时间，并作为 `not_before`：
-
-```bash
-curl --fail-with-body \
-  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
-  'https://2fa.077.li/api/v1/codes/outlook_primary?not_before=2026-07-30T03%3A00%3A00Z&wait_seconds=20'
-```
-
-重要参数：
-
-- `not_before`：只接受该 UTC 时间后的邮件；
-- `wait_seconds`：没有新邮件时允许继续轮询 0～30 秒；已开始的上游读取使用独立的有限超时，不会被过短的等待参数截断，因此实际 HTTP 时长可能略高于该值；
-- `min_ttl`：TOTP 至少还需有效多少秒。
-
-所有验证码响应包含 `Cache-Control: no-store, private`。
-
-## 7. 网页
-
-访问服务根路径即可登录。网页凭据与机器 API Token 分开：
-
-- 网页使用 Argon2id 密码 + 短期 HttpOnly session cookie；
-- API 使用高熵 Bearer Token；
-- 浏览器不会将 API Token、验证码或上游 token 写入 localStorage；
-- 邮箱验证码显示 90 秒后自动隐藏。
-
-## 8. 配置提取规则
-
-建议为每个邮件来源配置已知发件人或域名：
+最小配置：
 
 ```toml
-[sources.extractor]
-senders = ["no-reply@example.com"]
-sender_domains = ["example.com"]
-subject_keywords = ["verification", "验证码"]
-patterns = ['(?i)(?:code|验证码)\D{0,20}(?P<code>\d{6})']
-max_age_seconds = 600
-allow_generic_fallback = true
-generic_requires_keyword = true
+[server]
+host = "127.0.0.1"
+port = 8787
+allowed_hosts = ["2fa.077.li", "localhost", "127.0.0.1"]
+forwarded_allow_ips = "127.0.0.1"
+access_log = false
+
+[security]
+api_token_hash_files = ["secrets/api-project-a.sha256"]
+strict_secret_permissions = true
+api_rate_limit_per_minute = 60
 ```
 
-如果某个 Outlook 来源的验证码邮件只有裸六位数字，可以设置：
+配置中没有 TOTP、Outlook 或 FlySMS 凭据。
 
-```toml
-generic_requires_keyword = false
+校验：
+
+```bash
+./coderelay validate-config --config config.toml
 ```
 
-更安全的做法是同时配置发件人和精确正则，并在 API 请求中传 `not_before`。如果多个验证码候选得分相同，API 返回 `AMBIGUOUS_CODE`，不会随机选择。
+## 构建单文件程序
 
-每个自定义正则必须包含命名组 `(?P<code>...)`。
+```bash
+./scripts/build-binary.sh
+./dist/coderelay --version
+(cd dist && sha256sum -c coderelay.sha256)
+```
 
-## 9. CLI
+PyInstaller 不是跨平台编译器。应在与目标 VPS 相同 CPU 架构、且 glibc 不高于目标 VPS 的 Linux 环境构建。
+
+## 启动
+
+```bash
+./coderelay serve --config config.toml
+```
+
+默认只监听：
+
+```text
+127.0.0.1:8787
+```
+
+公网只能通过现有 Caddy 的 HTTPS 入口访问，不能直接开放 8787。
+
+## CLI
 
 ```text
 coderelay serve
 coderelay validate-config
 coderelay generate-api-token
-coderelay hash-password
-coderelay generate-key
-coderelay outlook-import
 coderelay --version
 ```
 
-使用 `CODERELAY_CONFIG=/path/config.toml` 可设置默认配置路径。
+旧版持久化相关命令已经删除：
 
-## 10. 开发测试
+```text
+outlook-import
+hash-password
+generate-key
+```
+
+## 安全调用示例
+
+```bash
+secret-manager-render-coderelay-json | curl --fail-with-body \
+  --connect-timeout 5 \
+  --max-time 75 \
+  -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data-binary @- \
+  https://2fa.077.li/api/v1/code
+```
+
+不要在命令行参数中内联真实 credential，也不要为了调用创建明文 `request.json`；应从消费项目内存或 secret manager 直接构造请求体。
+
+## 错误处理
+
+错误响应：
+
+```json
+{
+  "error": {
+    "code": "NO_FRESH_CODE",
+    "message": "No matching fresh verification code was found",
+    "retryable": true,
+    "retry_after_seconds": 2,
+    "request_id": "..."
+  }
+}
+```
+
+重要状态：
+
+- `401 AUTHENTICATION_REQUIRED`：CodeRelay Bearer Token 缺失或无效；
+- `404 NO_FRESH_CODE`：没有符合新鲜度的验证码；
+- `409 AMBIGUOUS_CODE`：多个候选无法安全判定；
+- `422 INVALID_CODE_REQUEST`：请求级 credential 格式无效；
+- `424 SOURCE_REAUTH_REQUIRED`：Outlook refresh token 需要调用方更新；
+- `429 RATE_LIMITED` / `SOURCE_RATE_LIMITED`：尊重 `Retry-After`；
+- `502/503/504`：上游失败、同步中或超时。
+
+所有 API 响应设置 `Cache-Control: no-store`。调用项目也不得缓存或记录成功响应。
+
+## 开发测试
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 pytest
+ruff check coderelay tests binary_entry.py
 ```
 
 测试覆盖：
 
+- 无 Bearer Token 无法取码；
+- 请求体 credential 不出现在验证错误中；
 - TOTP RFC 向量；
-- 加密 Outlook 凭据导入和 refresh token 轮换；
-- IMAP XOAUTH2、readonly、`BODY.PEEK` 和 MIME 正文解析；
-- FlySMS JSON 契约；
-- 验证码提取和新鲜度；
-- API/UI 鉴权和安全响应头；
-- PyInstaller 二进制 smoke test。
+- Outlook password 丢弃、refresh token 轮换、XOAUTH2、readonly 和 `BODY.PEEK`；
+- FlySMS 三段式一致性校验和 SSRF 防护；
+- `not_before`、旧码拒绝和歧义检测；
+- Provider 请求结束清理；
+- 有限轮询、超时和限流；
+- PyInstaller 单文件 smoke test。
 
-真实 Outlook/FlySMS token 不应出现在测试、fixture 或 CI 中。
+真实凭据不得进入 fixture、Git 或 CI。

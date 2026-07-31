@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_DIR="${VENV_DIR:-.venv-build}"
 
-"$PYTHON_BIN" -m venv "$VENV_DIR"
+"$PYTHON_BIN" -m venv --clear "$VENV_DIR"
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 if [[ -f requirements.lock ]]; then
   "$VENV_DIR/bin/python" -m pip install -r requirements.lock

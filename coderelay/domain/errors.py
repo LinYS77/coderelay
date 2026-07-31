@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from coderelay.domain.models import CredentialUpdate
+
 
 class CodeRelayError(Exception):
     code = "INTERNAL_ERROR"
@@ -12,9 +17,11 @@ class CodeRelayError(Exception):
         message: str | None = None,
         *,
         retry_after_seconds: int | None = None,
+        credential_update: CredentialUpdate | None = None,
     ) -> None:
         super().__init__(message or self.public_message)
         self.retry_after_seconds = retry_after_seconds
+        self.credential_update = credential_update
 
 
 class AuthenticationRequired(CodeRelayError):
@@ -33,19 +40,7 @@ class RequestRateLimited(CodeRelayError):
 class InvalidCodeRequest(CodeRelayError):
     code = "INVALID_CODE_REQUEST"
     status_code = 422
-    public_message = "The code request is not valid for this source"
-
-
-class SourceNotFound(CodeRelayError):
-    code = "SOURCE_NOT_FOUND"
-    status_code = 404
-    public_message = "The requested source does not exist"
-
-
-class SourceDisabled(CodeRelayError):
-    code = "SOURCE_DISABLED"
-    status_code = 404
-    public_message = "The requested source is disabled"
+    public_message = "The code request is invalid"
 
 
 class NoFreshCode(CodeRelayError):
@@ -64,13 +59,13 @@ class AmbiguousCode(CodeRelayError):
 class SourceCredentialsInvalid(CodeRelayError):
     code = "SOURCE_CREDENTIALS_INVALID"
     status_code = 424
-    public_message = "The source credentials are invalid"
+    public_message = "The supplied upstream credentials are invalid"
 
 
 class SourceReauthRequired(CodeRelayError):
     code = "SOURCE_REAUTH_REQUIRED"
     status_code = 424
-    public_message = "The source requires credential reauthorization or re-import"
+    public_message = "The supplied Outlook credential requires reauthorization"
 
 
 class SourceExpiredOrDisabled(CodeRelayError):
@@ -111,9 +106,3 @@ class UpstreamTimeout(CodeRelayError):
     status_code = 504
     retryable = True
     public_message = "The upstream source timed out"
-
-
-class ConfigurationFailure(CodeRelayError):
-    code = "CONFIGURATION_ERROR"
-    status_code = 500
-    public_message = "The server configuration is invalid"

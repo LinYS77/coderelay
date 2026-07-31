@@ -14,6 +14,7 @@ _REDACTIONS = (
     re.compile(r"(?i)\b(cr_live_|tok_)[A-Za-z0-9_-]+"),
     re.compile(r"(?i)(refresh[_ -]?token\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"(?i)(password\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"(?i)((?:credential|totp[_ -]?secret|secret)\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"\bM\.[A-Za-z0-9!*$._-]{80,}"),
 )
 

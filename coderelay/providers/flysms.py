@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 from urllib.parse import quote
 
 import httpx
 
-from coderelay.config import FlySmsSourceSettings
+from coderelay.config import FlySmsProviderSettings
+from coderelay.domain.credentials import FlySmsCredential
 from coderelay.domain.errors import (
     SourceCredentialsInvalid,
     SourceExpiredOrDisabled,
@@ -17,13 +17,9 @@ from coderelay.domain.errors import (
     UpstreamTimeout,
 )
 from coderelay.domain.extractor import CodeExtractor
-from coderelay.domain.models import CodeRequest, MailMessage, ProviderCode, SourceKind, SourceState, SourceStatus
+from coderelay.domain.models import CodeRequest, MailMessage, ProviderCode
 from coderelay.providers.base import CodeProvider
 from coderelay.providers.http_utils import bounded_json, parse_iso_datetime, parse_retry_after, require_text
-from coderelay.security import mask_email, read_secret
-
-_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-_TOKEN_RE = re.compile(r"^tok_[A-Za-z0-9_-]+$")
 
 
 class FlySmsProvider(CodeProvider):
@@ -34,31 +30,16 @@ class FlySmsProvider(CodeProvider):
 
     def __init__(
         self,
-        settings: FlySmsSourceSettings,
+        settings: FlySmsProviderSettings,
         client: httpx.AsyncClient,
-        *,
-        strict_secret_permissions: bool,
+        credential: FlySmsCredential,
     ) -> None:
         self.settings = settings
-        self.id = settings.id
-        self.display_name = settings.display_name
         self.poll_interval_seconds = settings.poll_interval_seconds
         self._client = client
         self._extractor = CodeExtractor(settings.extractor)
-        self._email = read_secret(
-            settings.email_file,
-            strict_permissions=strict_secret_permissions,
-            max_bytes=512,
-        ).casefold()
-        self._token = read_secret(
-            settings.token_file,
-            strict_permissions=strict_secret_permissions,
-            max_bytes=1_024,
-        )
-        if not _EMAIL_RE.fullmatch(self._email):
-            raise ValueError(f"FlySMS source {self.id!r} has an invalid mailbox email")
-        if not _TOKEN_RE.fullmatch(self._token):
-            raise ValueError(f"FlySMS source {self.id!r} has an invalid pickup token")
+        self._email = credential.email
+        self._token = credential.token
 
     async def fetch_code(self, request: CodeRequest) -> ProviderCode | None:
         now = datetime.now(UTC)
@@ -67,9 +48,7 @@ class FlySmsProvider(CodeProvider):
             latest = self._parse_detail(latest_data)
             extracted = self._extractor.extract([latest], not_before=request.not_before, now=now)
             if extracted:
-                return self._result(
-                    extracted.code, extracted.message, extracted.redacted_subject, extracted.message_fingerprint, now
-                )
+                return self._result(extracted.code, extracted.message, now)
 
         summaries_data = await self._request(
             self.settings.base_url,
@@ -82,9 +61,7 @@ class FlySmsProvider(CodeProvider):
         if summaries:
             extracted = self._extractor.extract(summaries, not_before=request.not_before, now=now)
             if extracted:
-                return self._result(
-                    extracted.code, extracted.message, extracted.redacted_subject, extracted.message_fingerprint, now
-                )
+                return self._result(extracted.code, extracted.message, now)
 
         for summary in summaries[: self.settings.max_detail_messages]:
             mailbox, uid = self._split_provider_id(summary.provider_message_id)
@@ -98,21 +75,12 @@ class FlySmsProvider(CodeProvider):
             detail = self._parse_detail(detail_data)
             extracted = self._extractor.extract([detail], not_before=request.not_before, now=now)
             if extracted:
-                return self._result(
-                    extracted.code, extracted.message, extracted.redacted_subject, extracted.message_fingerprint, now
-                )
+                return self._result(extracted.code, extracted.message, now)
         return None
 
-    def status(self) -> SourceStatus:
-        return SourceStatus(
-            id=self.id,
-            display_name=self.display_name,
-            provider_type=self.provider_type,
-            kind=SourceKind.EMAIL,
-            state=SourceState.EXPERIMENTAL,
-            experimental=True,
-            identity_hint=mask_email(self._email),
-        )
+    def close(self) -> None:
+        self._email = ""
+        self._token = ""
 
     async def _request(
         self,
@@ -217,22 +185,12 @@ class FlySmsProvider(CodeProvider):
         self,
         code: str,
         message: MailMessage,
-        redacted_subject: str,
-        fingerprint: str,
         now: datetime,
     ) -> ProviderCode:
         return ProviderCode(
-            source_id=self.id,
-            kind=SourceKind.EMAIL,
             code=code,
             observed_at=now,
             received_at=message.received_at,
-            freshness="fresh",
-            evidence={
-                "sender": message.sender[:320],
-                "subject": redacted_subject,
-                "message_fingerprint": fingerprint,
-            },
         )
 
     @staticmethod
