@@ -35,12 +35,21 @@ code = response.json()["code"]
 
 CodeRelay 服务器只持久化第 1 类凭据的 hash。第 2 类凭据仅在请求期间存在于内存中，不写配置、文件、数据库或跨请求缓存。
 
-每个消费项目应使用独立 API Token：
+本部署中的两个受控消费项目可以共用同一枚 API Token：
 
 ```text
 CODERELAY_BASE_URL=https://2fa.077.li
-CODERELAY_API_TOKEN=<管理员签发>
+CODERELAY_API_TOKEN=<管理员签发的共享Token>
 ```
+
+共享不会导致请求级 Outlook/FlySMS/TOTP credential 串用，但意味着两个项目共享：
+
+- 每 Token 限流配额；
+- Token撤销故障域；
+- Token轮换窗口；
+- 单项目审计区分能力。
+
+因此轮换时必须协调更新两个项目。若未来需要独立撤销或独立限流，再改成每项目一枚Token。
 
 不要把 API Token 或请求级 credential 写入：
 
@@ -401,14 +410,14 @@ X-Content-Type-Options: nosniff
 - 禁止将验证码用于指标 label；
 - 只在业务所需的最短时间内保留验证码。
 
-## 12. 管理员签发 Token
+## 12. 管理员签发共享 Token
 
-每个项目一把：
+本部署只需签发一枚供两个受控项目共用的 Token：
 
 ```bash
 sudo -u coderelay /usr/local/bin/coderelay \
   generate-api-token \
-  --hash-file /etc/coderelay/secrets/api-project-a.sha256
+  --hash-file /etc/coderelay/secrets/api-shared.sha256
 ```
 
 配置：
@@ -416,21 +425,22 @@ sudo -u coderelay /usr/local/bin/coderelay \
 ```toml
 [security]
 api_token_hash_files = [
-  "/etc/coderelay/secrets/api-project-a.sha256",
-  "/etc/coderelay/secrets/api-project-b.sha256",
+  "/etc/coderelay/secrets/api-shared.sha256",
 ]
 ```
 
 轮换步骤：
 
 ```text
-1. 新增新 Token hash
-2. 重启 CodeRelay
-3. 更新消费项目
-4. 验证新 Token
-5. 删除旧 hash
+1. 生成新共享Token和新hash文件
+2. 配置同时加载新旧两个hash并重启CodeRelay
+3. 更新项目A并验证
+4. 更新项目B并验证
+5. 删除旧hash
 6. 再次重启
 ```
+
+在两个项目都验证新Token前不得删除旧hash。共享Token必须进入两个项目各自的secret manager，不能进入代码仓库或普通配置。
 
 ## 13. 上线验收
 

@@ -17,7 +17,7 @@ http_max_connections = 20
 max_concurrent_code_requests = 10
 
 [security]
-api_token_hash_files = ["secrets/api-project-a.sha256"]
+api_token_hash_files = ["secrets/api-shared.sha256"]
 strict_secret_permissions = true
 api_rate_limit_per_minute = 60
 

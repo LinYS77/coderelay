@@ -18,6 +18,8 @@ https://2fa.077.li
 
 完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)。
 
+面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)。该文档目前是实施方案，当前生产实现仍为 Python 0.3.0。
+
 ## 核心边界
 
 ```text
