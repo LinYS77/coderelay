@@ -9,13 +9,13 @@
 | Phase 0：真实 Outlook 风险原型 | ✅ PASS | `go-imap/v2 beta.8` 路径通过；细节见 `prototypes/outlook-go/RESULTS.md` |
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
-| Phase 3：Outlook 正式实现 | 🟡 实现中 | OAuth/XOAUTH2、readonly IMAP、批量 partial FETCH、MIME、轮询和 `credential_update` 已接入；真实 Outlook 门禁与最终 hardening 尚未完成 |
+| Phase 3：Outlook 正式实现 | 🟡 实现中 | 正式 Provider 与本地 hardening 已完成；真实 OAuth/XOAUTH2/IMAP、`NO_FRESH_CODE` 错误轮换交付通过，新鲜码/未读保持/soak 仍待完成 |
 | Phase 4：Extractor parity | ⬜ 未开始 |  |
 | Phase 5：并发与安全收口 | ⬜ 未开始 |  |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
-当前生产服务仍为 Python 0.3.0。Go Phase 3 已接入 Outlook 请求路径，但尚未完成真实 OAuth/IMAP、新鲜码、轮换交付和资源 soak 门禁，不能替换生产服务。
+当前生产服务仍为 Python 0.3.0。Go Phase 3 已通过一次正式二进制的真实 OAuth、IMAP 和错误响应轮换门禁，但尚未完成新鲜码 HTTP 200、显式未读状态对照和资源 soak，不能替换生产服务。
 
 ---
 
@@ -185,14 +185,25 @@ ELF x86-64, statically linked, stripped
 
 ```text
 Go tests (含 Outlook parser/OAuth/IMAP/MIME/API update)：PASS
-Go 1.25.12 / 1.26.5 vet、race、staticcheck：PASS
-Outlook fuzz credential/MIME smoke：PASS
-真实 Outlook OAuth/IMAP/新鲜码/rotation/100-cycle soak：待执行
+Go 1.25.12 / 1.26.5 tests：PASS
+vet / race / staticcheck / govulncheck：PASS（reachable vulnerabilities: 0）
+Outlook credential/MIME fuzz smoke：PASS
+CGO=0 linux/amd64 static build：PASS
+SHA-256：aa34b28e73ff380d205cac0fa2e94eeceb95a01a96f10958bddedfce6886127b
+
+真实正式二进制 loopback 门禁：
+health/ready：HTTP 200
+OAuth refresh + IMAP XOAUTH2 + readonly batch FETCH：PASS（HTTP 404 NO_FRESH_CODE）
+错误响应 credential_update：PASS；轮换 token 已写入新的 caller-managed 0600 文件
+SIGTERM graceful shutdown：exit 0
+服务日志 email/refresh token/code 扫描：0 matches
+
+仍待执行：新鲜码 HTTP 200、成功响应 rotation、显式未读状态前后对照、paced 100-cycle/soak
 ```
 
 ## Phase 1～3 保留边界
 
-1. Go Phase 3 尚未成为生产替代品；真实 Outlook 门禁、Extractor parity、并发 soak 和部署验收仍未完成；
+1. Go Phase 3 尚未成为生产替代品；新鲜 Outlook 码、未读保持、Extractor parity、并发 soak 和部署验收仍未完成；
 2. 正式 Outlook Provider 不得退回复制 Phase 0 throwaway 实现；
 3. 不持久化任何 TOTP Secret、Outlook/FlySMS credential、邮件或验证码；
 4. 不跨请求缓存 TOTP 结果、OAuth access/refresh token 或 IMAP session；
