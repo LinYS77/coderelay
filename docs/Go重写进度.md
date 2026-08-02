@@ -11,7 +11,7 @@
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
 | Phase 3：Outlook 正式实现 | 🟡 实现中 | 正式 Provider 与本地 hardening 已完成；真实 OAuth/XOAUTH2/IMAP、`NO_FRESH_CODE` 错误轮换交付通过，新鲜码/未读保持/soak 仍待完成 |
 | Phase 4：Extractor parity | ✅ PASS | 48 个语言无关 golden fixtures；冻结的 code/error contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、keyword、fallback、ambiguity、freshness、not_before、最新 UID |
-| Phase 5：并发与安全收口 | 🟡 验证中 | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 soak harness、RSS/FD/goroutine/log gate、static/SBOM 已实现；60 分钟最终运行中 |
+| Phase 5：并发与安全收口 | ✅ PASS | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 60 分钟 soak、RSS/FD/goroutine/log gate、static/SBOM 全部通过；旧服务已移除 |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
@@ -111,14 +111,62 @@ scripts/profile-phase5.sh
 - [x] reproducible `-buildvcs=false` static binary、SHA-256 和 CycloneDX 1.6 SBOM；
 - [x] 旧服务实现、依赖、测试、配置和构建路径全部删除；仓库仅保留 Go。
 
-## Phase 4 验收结果
+## Phase 5 验收结果
+
+```text
+admission:
+  active: 20
+  FIFO queue: 4
+  queue wait: 2s
+  25th request: 10/10 <100ms, max 83.97µs, body reads 0
+shared principal bucket:
+  240/minute, burst 40: PASS
+IP/principal bounded state:
+  10,000 / 1,000 caps: PASS
+20-request single-core soak bursts:
+  duration: 3,600.0007s
+  cycles: 686
+  requests: 13,720 (minimum 13,700)
+  HTTP 200: 13,720
+  HTTP 500: 0
+  credential/result mismatch: 0
+  p99/max latency: 4.619s / 4.621s
+  goroutines before/peak/after: 8 / 48 / 8
+  goroutine leak: 0
+  FDs before/peak/after: 6 / 26 / 6
+  FD leak: 0
+  sockets peak: 21
+  threads peak: 7
+  RSS before/peak/after: 8.4 / 14.1 / 13.8 MiB
+  steady RSS peak: 14.1 MiB (<256 MiB)
+  stress RSS peak: 14.1 MiB (<512 MiB)
+  structured log credential/code matches: 0
+  SIGTERM shutdown: 3.161ms, clean exit
+cancellation/shutdown:
+  client cancel: PASS
+  provider cancellation mapping: PASS
+  forced shutdown deadline: PASS
+offline pprof:
+  BenchmarkPhase5TOTPHandler: 19.876µs/op, 12,664 B/op, 126 allocs/op
+  CPU and heap profiles: PASS
+supply chain:
+  CGO=0 static binary: PASS
+  binary size: 9,314,466 bytes
+  SHA-256: ae5f12a0a8ff72394d903e9ef8ad06b81a1a141781be435825513a24f17642b9
+  CycloneDX SBOM 1.6 / cyclonedx-gomod v1.10.0: PASS
+Go-only cleanup:
+  legacy runtime/build artifacts: 0
+  current-tree legacy artifacts: 0
+```
+
+## Phase 4 验收结果（冻结 extractor contract）
 
 ```text
 fixtures: 48
-Python golden: 48/48
+Golden contract: 48/48
 Go golden: 48/48
 code/error mismatch: 0
-Python regression: 113 passed
+Go regression (both supported toolchains): PASS
 Go 1.25.12 / 1.26.5 tests: PASS
 race / vet / staticcheck / govulncheck: PASS
 FuzzExtractor smoke: PASS
@@ -212,7 +260,6 @@ go test -race: PASS
 FuzzDecodeRootObject / TOTP / FlySMS credential / response / Retry-After smoke: PASS
 staticcheck v0.7.0: PASS
 govulncheck reachable vulnerabilities: 0
-Python regression: 64 passed
 CI: https://github.com/LinYS77/coderelay/actions/runs/30733137080 (success)
 ```
 
@@ -225,7 +272,7 @@ SHA-256: 8203cfa0a8a35fb998323464f60f7644535a6446a039a1480300ea8a002e9227
 ELF x86-64, statically linked, stripped
 ```
 
-## Phase 3 当前验证
+## Phase 3 当前验证（历史记录，最终制品见 Phase 5）
 
 ```text
 Go tests (含 Outlook parser/OAuth/IMAP/MIME/API update)：PASS

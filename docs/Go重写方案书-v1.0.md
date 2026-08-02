@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成；Phase 0、Phase 1、Phase 2、Phase 4 已通过，Phase 3 真实验收未完成
+> 文档状态：设计完成；Phase 0、Phase 1、Phase 2、Phase 4、Phase 5 已通过，Phase 3/6/7 真实部署门禁未完成
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
@@ -1959,7 +1959,7 @@ context cancel/conn deadline
 - 1CPU load/60-minute soak、credential log scan、goroutine/FD/RSS gate；
 - 更新API调用指南：共享Key、`SERVER_BUSY`、90秒timeout；
 - CGO=0 static binary、checksum、CycloneDX SBOM、govulncheck；
-- Phase 5 全部门禁通过后删除旧服务源代码、依赖、测试、配置和构建路径，仓库只保留 Go。
+- [x] Phase 5 全部门禁通过后已删除旧服务源代码、依赖、测试、配置和构建路径，仓库只保留 Go。
 
 ### Phase 6：真实验收
 
@@ -1992,10 +1992,10 @@ Caddy canary 切少量请求
 Go 1.0.0 只有全部满足才可进入真实部署切换：
 
 - [ ] API 请求/响应兼容；
-- [ ] 同一 CodeRelay Key 20并发；
-- [ ] 20并发无 credential/result串用；
-- [ ] admission20+4行为通过；
-- [ ] 第25个请求快速503；
+- [x] 同一 CodeRelay Key 20并发；
+- [x] 20并发无 credential/result串用；
+- [x] admission20+4行为通过；
+- [x] 第25个请求快速503；
 - [ ] TOTP RFC全部通过；
 - [ ] Outlook OAuth/XOAUTH2真实通过；
 - [ ] Outlook readonly/Peek/未读状态通过；
@@ -2003,15 +2003,15 @@ Go 1.0.0 只有全部满足才可进入真实部署切换：
 - [ ] Outlook token rotation在成功和错误响应均通过；
 - [x] FlySMS真实邮件读取通过；
 - [x] frozen extractor golden contract通过；
-- [ ] `go test -race ./...`通过；
-- [ ] fuzz smoke通过；
-- [ ] 60分钟单核soak通过；
-- [ ] RSS/FD/goroutine阈值通过；
-- [ ] cancel/shutdown无泄漏；
-- [ ] 日志/二进制/Git credential扫描通过；
-- [ ] `govulncheck`通过；
-- [ ] CGO=0静态二进制通过；
-- [ ] amd64 artifact/checksum通过；
+- [x] `go test -race ./...`通过；
+- [x] fuzz smoke通过；
+- [x] 60分钟单核soak通过；
+- [x] RSS/FD/goroutine阈值通过；
+- [x] cancel/shutdown无泄漏；
+- [x] 日志/二进制/Git credential扫描通过；
+- [x] `govulncheck`通过；
+- [x] CGO=0静态二进制通过；
+- [x] amd64 artifact/checksum通过；
 - [ ] VPS实际1核2G验收通过；
 - [ ] 两个实际调用项目端到端通过；
 - [ ] 所有聊天/人工验收中暴露过的TOTP、Outlook、FlySMS凭据已轮换；
