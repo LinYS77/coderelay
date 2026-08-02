@@ -136,7 +136,7 @@ detail fan-out cap：5
 mailbox read：PASS
 HTTP status：404
 error code：NO_FRESH_CODE
-elapsed：1.069 s
+elapsed：1.236 s
 credential/code application-log matches：0
 ```
 
@@ -162,6 +162,7 @@ FuzzDecodeRootObject / TOTP / FlySMS credential / response / Retry-After smoke: 
 staticcheck v0.7.0: PASS
 govulncheck reachable vulnerabilities: 0
 Python regression: 64 passed
+CI: https://github.com/LinYS77/coderelay/actions/runs/30733137080 (success)
 ```
 
 构建产物（本地、未提交）：
