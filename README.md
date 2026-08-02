@@ -176,7 +176,7 @@ chmod 700 secrets
 ```bash
 ./scripts/build.sh
 ./dist/coderelay --version
-sha256sum -c dist/coderelay.sha256
+(cd dist && sha256sum -c coderelay.sha256)
 file dist/coderelay
 ```
 
@@ -186,7 +186,7 @@ file dist/coderelay
 
 ```bash
 ./scripts/generate-sbom.sh
-sha256sum -c dist/coderelay.cdx.json.sha256
+(cd dist && sha256sum -c coderelay.cdx.json.sha256)
 ```
 
 SBOM 使用固定 `cyclonedx-gomod v1.10.0` 从最终二进制生成。

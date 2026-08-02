@@ -126,6 +126,11 @@ jobs:
           CODERELAY_PROFILE_DIR=dist/pprof ./scripts/profile-phase5.sh
       - name: CycloneDX SBOM
         run: ./scripts/generate-sbom.sh
+      - name: Verify flattened artifact checksums
+        run: |
+          mkdir -p /tmp/coderelay-artifact-layout/pprof
+          cp dist/coderelay dist/coderelay.sha256 dist/coderelay.cdx.json dist/coderelay.cdx.json.sha256 /tmp/coderelay-artifact-layout/
+          (cd /tmp/coderelay-artifact-layout && sha256sum -c coderelay.sha256 && sha256sum -c coderelay.cdx.json.sha256)
       - uses: actions/upload-artifact@v7
         with:
           name: coderelay-go-phase5-linux-amd64
@@ -140,4 +145,4 @@ jobs:
             dist/pprof/cpu-top.txt
             dist/pprof/heap-top.txt
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 90

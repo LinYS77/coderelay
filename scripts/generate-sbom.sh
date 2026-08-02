@@ -16,6 +16,8 @@ if [[ ! -x "$BINARY" ]]; then
 fi
 
 mkdir -p "$(dirname -- "$OUTPUT")"
+OUTPUT_DIR=$(dirname -- "$OUTPUT")
+OUTPUT_NAME=$(basename -- "$OUTPUT")
 go run "github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@${TOOL_VERSION}" \
   bin \
   -json \
@@ -27,6 +29,9 @@ go run "github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@${TOOL_VERSION}
 grep -q '"bomFormat": "CycloneDX"' "$OUTPUT"
 grep -q '"specVersion": "1.6"' "$OUTPUT"
 grep -q '"components"' "$OUTPUT"
-sha256sum "$OUTPUT" > "${OUTPUT}.sha256"
-sha256sum -c "${OUTPUT}.sha256"
+(
+  cd -- "$OUTPUT_DIR"
+  sha256sum "$OUTPUT_NAME" > "${OUTPUT_NAME}.sha256"
+  sha256sum -c "${OUTPUT_NAME}.sha256"
+)
 printf 'CycloneDX SBOM: %s\n' "$OUTPUT"

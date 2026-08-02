@@ -10,7 +10,9 @@ GOOS=${GOOS:-linux}
 GOARCH=${GOARCH:-amd64}
 OUTPUT=${CODERELAY_GO_OUTPUT:-dist/coderelay}
 
-mkdir -p "$(dirname -- "$OUTPUT")"
+OUTPUT_DIR=$(dirname -- "$OUTPUT")
+OUTPUT_NAME=$(basename -- "$OUTPUT")
+mkdir -p "$OUTPUT_DIR"
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
   go build \
   -trimpath \
@@ -20,10 +22,16 @@ CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
   -o "$OUTPUT" \
   ./cmd/coderelay
 
-sha256sum "$OUTPUT" > "${OUTPUT}.sha256"
+(
+  cd -- "$OUTPUT_DIR"
+  sha256sum "$OUTPUT_NAME" > "${OUTPUT_NAME}.sha256"
+)
 if [[ "$GOOS" == "$(go env GOOS)" && "$GOARCH" == "$(go env GOARCH)" ]]; then
   "$OUTPUT" --version
 else
   printf 'built %s/%s; execution skipped on %s/%s\n' "$GOOS" "$GOARCH" "$(go env GOOS)" "$(go env GOARCH)"
 fi
-sha256sum -c "${OUTPUT}.sha256"
+(
+  cd -- "$OUTPUT_DIR"
+  sha256sum -c "${OUTPUT_NAME}.sha256"
+)
