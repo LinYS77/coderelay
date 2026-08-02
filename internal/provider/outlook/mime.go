@@ -16,6 +16,7 @@ import (
 
 const (
 	maxMIMEParts    = 100
+	maxMIMEDepth    = 10
 	maxMIMEText     = 100_000
 	maxSubjectRunes = 10_000
 	maxSenderRunes  = 4_096
@@ -26,6 +27,9 @@ func parseMIME(raw []byte) (subject, sender, text, html string, err error) {
 }
 
 func parseMIMEWithPartial(raw []byte, allowPartial bool) (subject, sender, text, html string, err error) {
+	if structureErr := validateMIMEStructure(raw, allowPartial); structureErr != nil {
+		return "", "", "", "", structureErr
+	}
 	reader, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil && !(message.IsUnknownCharset(err) && reader != nil) {
 		return "", "", "", "", domainSchemaError()
@@ -46,8 +50,8 @@ func parseMIMEWithPartial(raw []byte, allowPartial bool) (subject, sender, text,
 	var plainParts, htmlParts []string
 	plainLength, htmlLength := 0, 0
 	for partCount := 0; ; partCount++ {
-		if partCount >= maxMIMEParts {
-			break
+		if partCount > maxMIMEParts {
+			return subject, sender, strings.Join(plainParts, "\n"), strings.Join(htmlParts, "\n"), domainSchemaError()
 		}
 		part, nextErr := reader.NextPart()
 		if errors.Is(nextErr, io.EOF) || allowPartial && isPartialMIMEEOF(nextErr) {
@@ -62,7 +66,7 @@ func parseMIMEWithPartial(raw []byte, allowPartial bool) (subject, sender, text,
 		if part == nil {
 			break
 		}
-		if part.Header.Get("Content-Disposition") != "" && strings.HasPrefix(strings.ToLower(part.Header.Get("Content-Disposition")), "attachment") {
+		if isMIMEAttachment(part.Header) {
 			_, _ = io.CopyN(io.Discard, part.Body, int64(maxMIMEText))
 			continue
 		}
@@ -113,6 +117,54 @@ func parseMIMEWithPartial(raw []byte, allowPartial bool) (subject, sender, text,
 		}
 	}
 	return subject, sender, strings.Join(plainParts, "\n"), strings.Join(htmlParts, "\n"), nil
+}
+
+func validateMIMEStructure(raw []byte, allowPartial bool) error {
+	entity, err := message.Read(bytes.NewReader(raw))
+	if err != nil && !(message.IsUnknownCharset(err) && entity != nil) {
+		return domainSchemaError()
+	}
+	partCount := 0
+	err = entity.Walk(func(path []int, _ *message.Entity, walkErr error) error {
+		if walkErr != nil && !message.IsUnknownCharset(walkErr) {
+			return domainSchemaError()
+		}
+		if len(path) > maxMIMEDepth {
+			return domainSchemaError()
+		}
+		if len(path) > 0 {
+			partCount++
+			if partCount > maxMIMEParts {
+				return domainSchemaError()
+			}
+		}
+		return nil
+	})
+	if err == nil {
+		return nil
+	}
+	if allowPartial && isPartialMIMEEOF(err) {
+		return nil
+	}
+	return domainSchemaError()
+}
+
+func isMIMEAttachment(header mail.PartHeader) bool {
+	if header == nil {
+		return false
+	}
+	disposition := header.Get("Content-Disposition")
+	if parsed, parameters, err := mime.ParseMediaType(disposition); err == nil {
+		if strings.EqualFold(parsed, "attachment") || parameters["filename"] != "" {
+			return true
+		}
+	} else if strings.HasPrefix(strings.ToLower(strings.TrimSpace(disposition)), "attachment") {
+		return true
+	}
+	if _, parameters, err := mime.ParseMediaType(header.Get("Content-Type")); err == nil && parameters["name"] != "" {
+		return true
+	}
+	return false
 }
 
 func domainSchemaError() error { return domain.ErrUpstreamSchemaChanged }
