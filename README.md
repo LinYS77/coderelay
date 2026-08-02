@@ -18,7 +18,19 @@ https://2fa.077.li
 
 完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)。
 
-面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)。隔离的 [`Phase 0 Outlook Go 风险原型`](prototypes/outlook-go/README.md) 已通过本地与真实 Outlook 门禁；Phase 1 尚未开始，当前生产实现仍为 Python 0.3.0。
+面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)，实施状态见 [`docs/Go重写进度.md`](docs/Go重写进度.md)。Phase 0 与 Phase 1 已通过，Phase 2 尚未开始；当前 Go 二进制只支持 TOTP，生产实现仍为 Python 0.3.0。
+
+Go Phase 1 本地验证与构建：
+
+```bash
+GOTOOLCHAIN=go1.26.5 go test -race ./...
+./scripts/build-go.sh
+cp config.go.example.toml config.go.toml
+./dist/coderelay-go generate-api-token --hash-file secrets/api.sha256
+./dist/coderelay-go validate-config --config config.go.toml
+```
+
+Go 使用独立的 [`config.go.example.toml`](config.go.example.toml)，不能把新增字段直接交给 Python 0.3。
 
 ## 核心边界
 

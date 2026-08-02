@@ -1,0 +1,30 @@
+# CodeRelay Go Phase 1 configuration.
+# This file is intentionally separate from config.example.toml used by Python 0.3.
+
+[server]
+host = "127.0.0.1"
+port = 8787
+allowed_hosts = ["2fa.077.li", "localhost", "127.0.0.1"]
+cors_origins = []
+forwarded_allow_ips = "127.0.0.1,::1"
+access_log = false
+log_level = "info"
+max_inbound_connections = 128
+max_concurrent_code_requests = 20
+max_queued_code_requests = 4
+admission_wait_seconds = 2.0
+read_header_timeout_seconds = 3.0
+read_timeout_seconds = 10.0
+write_timeout_seconds = 100.0
+idle_timeout_seconds = 60.0
+shutdown_timeout_seconds = 90.0
+max_header_bytes = 16384
+max_body_bytes = 131072
+
+[security]
+api_token_hash_files = ["secrets/api-shared.sha256"]
+strict_secret_permissions = true
+api_rate_limit_per_minute = 240
+api_rate_limit_burst = 40
+max_ip_rate_limit_entries = 10000
+max_principal_rate_limit_entries = 1000

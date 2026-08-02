@@ -16,12 +16,18 @@ reference/
 
 # Runtime state and credentials
 config.toml
+config.go.toml
+config.python.toml
 secrets/
 data/
 *.token-cache
 *.enc
 *.key
 *.secret
+*.test
+coverage.out
+*.prof
+*.trace
 
 # Editors and OS
 .idea/

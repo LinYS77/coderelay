@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成；Phase 0 风险原型已通过，Phase 1 尚未开始
+> 文档状态：设计完成；Phase 0、Phase 1 已通过，Phase 2 尚未开始
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
@@ -1763,6 +1763,7 @@ max_wait_seconds = 30
 http_connect_timeout_seconds = 5.0
 http_read_timeout_seconds = 20.0
 http_max_connections = 20
+max_inbound_connections = 128
 max_concurrent_code_requests = 20
 max_queued_code_requests = 4
 admission_wait_seconds = 2.0
@@ -1807,6 +1808,7 @@ max_detail_messages = 5
 ```text
 maxOperation = max(outlookFetchTimeout, flysmsFetchTimeout) + max_wait_seconds
 http_max_connections >= max_concurrent_code_requests
+max_inbound_connections >= max_concurrent_code_requests + max_queued_code_requests
 api_rate_limit_burst >= max_concurrent_code_requests
 max_queued_code_requests <= max_concurrent_code_requests
 writeTimeout >= admissionWait + maxOperation + 10s
@@ -1909,6 +1911,8 @@ context cancel/conn deadline
 用真实 Outlook 验证 go-imap beta.8。失败则先处理 Adapter 选择，不进入全面重写。
 
 ### Phase 1：基础服务 + TOTP
+
+正式实现与验收记录见 [`docs/Go重写进度.md`](Go重写进度.md)。此阶段使用根 `go.mod`、`cmd/coderelay/` 和 `internal/`，不从 Phase 0 throwaway module 直接复制代码。
 
 - config；
 - Bearer；
