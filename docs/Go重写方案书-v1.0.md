@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成；Phase 0、Phase 1 已通过；Phase 2 实现与真实 NO_FRESH_CODE 已通过，等待新鲜真实邮件完成 HTTP 200 门禁
+> 文档状态：设计完成；Phase 0、Phase 1、Phase 2 已通过，Phase 3 尚未开始
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
@@ -2003,7 +2003,7 @@ Go 1.0.0 只有全部满足才可替代 Python：
 - [ ] Outlook readonly/Peek/未读状态通过；
 - [ ] Outlook batch FETCH通过；
 - [ ] Outlook token rotation在成功和错误响应均通过；
-- [ ] FlySMS真实邮件读取通过；
+- [x] FlySMS真实邮件读取通过；
 - [ ] Python extractor golden parity通过；
 - [ ] `go test -race ./...`通过；
 - [ ] fuzz smoke通过；

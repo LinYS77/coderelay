@@ -8,8 +8,8 @@
 |---|---|---|
 | Phase 0：真实 Outlook 风险原型 | ✅ PASS | `go-imap/v2 beta.8` 路径通过；细节见 `prototypes/outlook-go/RESULTS.md` |
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
-| Phase 2：FlySMS | 🟡 实现 PASS | contract/fuzz/fault 与真实 `NO_FRESH_CODE` 通过；等待新鲜真实邮件完成 HTTP 200 门禁 |
-| Phase 3：Outlook 正式实现 | ⬜ 未开始 | Phase 2 最后一项真实门禁后进入；Phase 0 原型不得直接复制进生产路径 |
+| Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
+| Phase 3：Outlook 正式实现 | ⬜ 未开始 | 下一阶段；Phase 0 原型不得直接复制进生产路径 |
 | Phase 4：Extractor parity | ⬜ 未开始 |  |
 | Phase 5：并发与安全收口 | ⬜ 未开始 |  |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
@@ -134,13 +134,15 @@ detail fan-out cap：5
 
 ```text
 mailbox read：PASS
-HTTP status：404
-error code：NO_FRESH_CODE
-elapsed：1.236 s
+无新鲜码：HTTP 404 / NO_FRESH_CODE / 1.236 s
+新鲜邮件：HTTP 200
+返回 JSON keys：仅 code
+code shape：ASCII six-digit PASS
+fresh-code elapsed：0.306 s
 credential/code application-log matches：0
 ```
 
-真实 credential、上游连接和无新鲜码语义已经通过。由于验收时邮箱中没有 10 分钟内的新验证码，真实 `HTTP 200 + six-digit code` 门禁仍需先触发一封新的验证码邮件；合成 contract 的新鲜码路径已返回正确六位 code。
+第一次新鲜码探针使用的 `not_before` 晚于上游实际邮件接收时间，因此正确返回 `NO_FRESH_CODE`。脱敏诊断确认新邮件接收时间后，将 `not_before` 调整到实际触发窗口内，同时仍排除约两小时前的旧邮件；最终二进制返回 HTTP 200 和唯一六位 `code`。真实 credential 的有新鲜码与无新鲜码两条门禁均已通过。
 
 Admission：
 
