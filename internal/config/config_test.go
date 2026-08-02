@@ -18,6 +18,9 @@ func TestGoExampleConfigLoadsAndIsBounded(t *testing.T) {
 	if cfg.Server.MaxInboundConnections != 128 || cfg.Server.MaxConcurrentCodeRequests != 20 || cfg.Server.MaxQueuedCodeRequests != 4 {
 		t.Fatal("connection or admission defaults are wrong")
 	}
+	if cfg.Server.MaxWaitSeconds != 30 || cfg.Server.HTTPMaxConnections != 20 || cfg.Providers.FlySMS.BaseURL != FlySMSBaseURL {
+		t.Fatal("FlySMS HTTP defaults are wrong")
+	}
 	if cfg.Security.APIRateLimitBurst != 40 || cfg.Security.APIRateLimitPerMinute != 240 {
 		t.Fatal("rate defaults are wrong")
 	}
@@ -50,6 +53,9 @@ func TestConfigRejectsUnknownLegacyAndUnsafeFields(t *testing.T) {
 		"[security]\napi_token_hash_files=[\"x\"]\nmax_ip_rate_limit_entries=100001\n",
 		"[security]\napi_token_hash_files=[\"x\"]\nstrict_secret_permissions=false\n",
 		"[security]\napi_token_hash_files=[\"   \"]\n",
+		"[server]\nhttp_max_connections=19\n[security]\napi_token_hash_files=[\"x\"]\n",
+		"[providers.flysms]\nbase_url=\"https://example.com/icloud/api/pickup/messages\"\n[security]\napi_token_hash_files=[\"x\"]\n",
+		"[providers.flysms]\nmax_detail_messages=11\n[security]\napi_token_hash_files=[\"x\"]\n",
 	}
 	for _, value := range cases {
 		path := writeConfig(t, value)

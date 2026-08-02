@@ -8,18 +8,18 @@
 |---|---|---|
 | Phase 0：真实 Outlook 风险原型 | ✅ PASS | `go-imap/v2 beta.8` 路径通过；细节见 `prototypes/outlook-go/RESULTS.md` |
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
-| Phase 2：FlySMS | ⬜ 未开始 | 下一阶段 |
-| Phase 3：Outlook 正式实现 | ⬜ 未开始 | Phase 0 原型不得直接复制进生产路径 |
+| Phase 2：FlySMS | 🟡 实现 PASS | contract/fuzz/fault 与真实 `NO_FRESH_CODE` 通过；等待新鲜真实邮件完成 HTTP 200 门禁 |
+| Phase 3：Outlook 正式实现 | ⬜ 未开始 | Phase 2 最后一项真实门禁后进入；Phase 0 原型不得直接复制进生产路径 |
 | Phase 4：Extractor parity | ⬜ 未开始 |  |
 | Phase 5：并发与安全收口 | ⬜ 未开始 |  |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
-当前生产服务仍为 Python 0.3.0。Go Phase 1 二进制只实现 TOTP；Outlook/FlySMS 请求暂时返回 `422 INVALID_CODE_REQUEST`，不能替换生产服务。
+当前生产服务仍为 Python 0.3.0。Go Phase 2 二进制实现 TOTP 和 FlySMS；Outlook 请求仍返回 `422 INVALID_CODE_REQUEST`，不能替换生产服务。
 
 ---
 
-## Phase 1 交付
+## Phase 1～2 交付
 
 正式代码位于：
 
@@ -32,6 +32,8 @@ internal/
   config/
   credential/
   domain/
+  extractor/
+  provider/flysms/
   ratelimit/
   secretfile/
   service/
@@ -70,13 +72,21 @@ scripts/build-go.sh
 - [x] 严格 discriminated JSON、重复 root key 拒绝、128 KiB body limit；
 - [x] Base32 和 `otpauth://totp/...`；
 - [x] SHA1/SHA256/SHA512、六位输出和 period/min_ttl；
+- [x] FlySMS 三段式 credential parser；
+- [x] email/token/URL 一致性和 constant-time token 比较；
+- [x] 固定 `https://flysms.xyz/icloud/api/pickup/messages`，拒绝 userinfo/port/query/非规范 fragment；
+- [x] 独立、无 Cookie、禁代理、禁 redirect、HTTP/1-only Transport；
+- [x] latest → history → 最多 5 条 detail；
+- [x] 1 MiB history、3 MiB latest/detail 和字段级边界；
+- [x] entitlement、401/403/404/429/503/5xx/timeout 映射；
+- [x] 45 秒 attempt、20 秒单 HTTP、0～30 秒 polling；
 - [x] request-scoped Secret、best-effort clear、日志/序列化脱敏；
 - [x] graceful shutdown 基础；
 - [x] CGO=0 Linux amd64 静态二进制；
 - [x] Go 1.25.12 / 1.26.5 CI；
 - [x] race、fuzz smoke、staticcheck、govulncheck。
 
-## Phase 1 验收结果
+## Phase 1～2 验收结果
 
 受控 handler 测试：
 
@@ -102,6 +112,36 @@ application log secret matches: 0
 SIGTERM graceful stop: PASS
 ```
 
+### FlySMS Phase 2
+
+合成 contract / fault 门禁：
+
+```text
+latest / history / detail：PASS
+email/token/header identity：PASS
+entitlement active/unlimited/expired/pending：PASS
+401/403/404/429/503/5xx：PASS
+HTTP timeout / cancel / read fault / malformed / oversize：PASS
+redirect destination hits：0
+Cookie persistence：0
+negotiated protocol：HTTP/1.1
+successful keep-alive requests / connections：2 / 1
+20 parallel credentials：20/20，identity/code mismatch 0
+detail fan-out cap：5
+```
+
+真实 FlySMS credential，经最终 Go HTTP API：
+
+```text
+mailbox read：PASS
+HTTP status：404
+error code：NO_FRESH_CODE
+elapsed：1.069 s
+credential/code application-log matches：0
+```
+
+真实 credential、上游连接和无新鲜码语义已经通过。由于验收时邮箱中没有 10 分钟内的新验证码，真实 `HTTP 200 + six-digit code` 门禁仍需先触发一封新的验证码邮件；合成 contract 的新鲜码路径已返回正确六位 code。
+
 Admission：
 
 ```text
@@ -116,10 +156,9 @@ active graceful completion: PASS
 质量门禁：
 
 ```text
-Go tests: 63 passed / 12 packages
+Go tests: 117 passed / 14 packages
 go test -race: PASS
-FuzzDecodeRootObject smoke: PASS
-FuzzCredentialParser smoke: PASS
+FuzzDecodeRootObject / TOTP / FlySMS credential / response / Retry-After smoke: PASS
 staticcheck v0.7.0: PASS
 govulncheck reachable vulnerabilities: 0
 Python regression: 64 passed
@@ -129,17 +168,17 @@ Python regression: 64 passed
 
 ```text
 dist/coderelay-go
-size: 6,926,498 bytes
-SHA-256: 5e7fda1381c1e476b0028e16784726c2050f27e0aa09172d372bfa7e6d888251
+size: 7,631,010 bytes
+SHA-256: 8203cfa0a8a35fb998323464f60f7644535a6446a039a1480300ea8a002e9227
 ELF x86-64, statically linked, stripped
 ```
 
 ## Phase 1 保留边界
 
-1. Go Phase 1 不是生产替代品，只支持 TOTP；
-2. 不实现 Outlook/FlySMS Provider；
+1. Go Phase 2 不是生产替代品，只支持 TOTP 和 FlySMS，尚无 Outlook；
+2. 不实现正式 Outlook Provider；
 3. 不复制 Phase 0 throwaway 实现；
 4. 不持久化任何 TOTP Secret 或验证码；
 5. 不跨请求缓存 TOTP 结果；
 6. 不开启 CORS、UI、docs、pprof 或公网 listener；
-7. Phase 2 开始前继续保留 Python 0.3.0 生产基线与回滚能力。
+7. Phase 3 开始前继续保留 Python 0.3.0 生产基线与回滚能力。

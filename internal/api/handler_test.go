@@ -35,7 +35,7 @@ func TestHealthAndReadinessArePublic(t *testing.T) {
 	defer cancel()
 
 	live := perform(handler, http.MethodGet, "/health/live", nil, "")
-	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase1"`) {
+	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase2"`) {
 		t.Fatalf("live: status=%d body=%s", live.Code, live.Body.String())
 	}
 	ready := perform(handler, http.MethodGet, "/health/ready", nil, "")
@@ -210,6 +210,59 @@ func TestStrictJSONAndBodyLimitsNeverEchoCredential(t *testing.T) {
 	}
 	if got := chunkedBody.bytesRead.Load(); got > handler.config.Server.MaxBodyBytes+1 {
 		t.Fatalf("oversized reader consumed %d bytes, limit=%d", got, handler.config.Server.MaxBodyBytes)
+	}
+}
+
+func TestFlySMSRequestDecodesAndMapsSuccess(t *testing.T) {
+	resolver := &captureFlyResolver{code: [6]byte{'1', '2', '3', '4', '5', '6'}}
+	handler, token, cancel := newTestHandler(t, resolver, nil)
+	defer cancel()
+	notBefore := time.Now().UTC().Add(-time.Second).Format(time.RFC3339Nano)
+	payload := []byte(`{"type":"flysms","credential":"box@example.com---tok_test-token_12345678---https://flysms.xyz/icloud/pickup#email=box%40example.com&key=tok_test-token_12345678","not_before":"` + notBefore + `","wait_seconds":7}`)
+	response := perform(handler, http.MethodPost, "/api/v1/code", payload, string(token))
+	if response.Code != http.StatusOK || response.Body.String() != `{"code":"123456"}` {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if resolver.provider != domain.ProviderFlySMS || resolver.wait != 7 || !resolver.hasTime {
+		t.Fatal("FlySMS request fields were not decoded")
+	}
+}
+
+func TestFlySMSRequestValidationRejectsFutureAndUnknownFields(t *testing.T) {
+	handler, token, cancel := newTestHandler(t, &captureFlyResolver{}, nil)
+	defer cancel()
+	cases := []string{
+		`{"type":"flysms","credential":"x","unknown":1}`,
+		`{"type":"flysms","credential":"x","not_before":"2099-01-01T00:00:00Z"}`,
+		`{"type":"flysms","credential":"x","wait_seconds":31}`,
+	}
+	for _, value := range cases {
+		response := perform(handler, http.MethodPost, "/api/v1/code", []byte(value), string(token))
+		if response.Code != http.StatusUnprocessableEntity || errorCode(t, response) != "VALIDATION_ERROR" {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestFlySMSErrorMapping(t *testing.T) {
+	cases := []struct {
+		err    error
+		code   string
+		status int
+	}{
+		{err: domain.ErrNoFreshCode, code: "NO_FRESH_CODE", status: 404},
+		{err: domain.ErrAmbiguousCode, code: "AMBIGUOUS_CODE", status: 409},
+		{err: domain.ErrSourceRateLimited, code: "SOURCE_RATE_LIMITED", status: 429},
+		{err: domain.ErrSourceSyncing, code: "SOURCE_SYNCING", status: 503},
+		{err: domain.ErrUpstreamSchemaChanged, code: "UPSTREAM_SCHEMA_CHANGED", status: 502},
+	}
+	for _, test := range cases {
+		handler, token, cancel := newTestHandler(t, errorResolver{cause: test.err}, nil)
+		response := perform(handler, http.MethodPost, "/api/v1/code", []byte(`{"type":"flysms","credential":"x"}`), string(token))
+		cancel()
+		if response.Code != test.status || errorCode(t, response) != test.code {
+			t.Fatalf("error=%v status=%d body=%s", test.err, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -516,6 +569,20 @@ func (invalidResultResolver) Resolve(context.Context, *domain.Command) (domain.R
 	return domain.Result{Code: [6]byte{'1', '2', 'x', '4', '5', '6'}}, nil
 }
 
+type captureFlyResolver struct {
+	provider domain.Provider
+	wait     int
+	hasTime  bool
+	code     [6]byte
+}
+
+func (r *captureFlyResolver) Resolve(_ context.Context, command *domain.Command) (domain.Result, error) {
+	r.provider = command.Provider
+	r.wait = command.WaitSeconds
+	r.hasTime = command.NotBefore != nil
+	return domain.Result{Code: r.code}, nil
+}
+
 type panicResolver struct{ value string }
 
 func (r panicResolver) Resolve(context.Context, *domain.Command) (domain.Result, error) {
@@ -679,6 +746,7 @@ func waitForHandlerCount(t *testing.T, value func() int64, expected int64) {
 var _ io.ReadCloser = (*countingBody)(nil)
 var _ Resolver = (*blockingResolver)(nil)
 var _ Resolver = testTOTPResolver{}
+var _ Resolver = (*captureFlyResolver)(nil)
 var _ Resolver = invalidResultResolver{}
 var _ Resolver = errorResolver{}
 var _ Resolver = panicResolver{}

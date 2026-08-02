@@ -178,7 +178,13 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 		return
 	}
 
-	command, err := readCodeCommand(unwrapResponseWriter(writer), request, h.config.Server.MaxBodyBytes)
+	command, err := readCodeCommand(
+		unwrapResponseWriter(writer),
+		request,
+		h.config.Server.MaxBodyBytes,
+		h.config.Server.MaxWaitSeconds,
+		time.Now().UTC(),
+	)
 	if err != nil {
 		if request.Context().Err() != nil {
 			return
@@ -203,7 +209,7 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 		if request.Context().Err() != nil || errors.Is(err, context.Canceled) {
 			return
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, domain.ErrUpstreamTimeout) {
 			writePublicError(writer, id, upstreamTimeout())
 			return
 		}
@@ -211,18 +217,48 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 			writePublicError(writer, id, invalidCodeRequest())
 			return
 		}
-		h.logger.Error("request_failed", "request_id", id, "provider", "totp", "stage", "resolve", "error_code", "INTERNAL_ERROR", "status", 500)
+		if problem := providerError(err); problem != nil {
+			writePublicError(writer, id, problem)
+			return
+		}
+		provider := string(command.Provider)
+		h.logger.Error("request_failed", "request_id", id, "provider", provider, "stage", "resolve", "error_code", "INTERNAL_ERROR", "status", 500)
 		writePublicError(writer, id, internalError())
 		return
 	}
+	provider := string(command.Provider)
 	defer result.Destroy()
 	if !validSixDigitCode(result.Code) {
-		h.logger.Error("request_failed", "request_id", id, "provider", "totp", "stage", "resolve", "error_code", "INVALID_PROVIDER_RESULT", "status", 500)
+		h.logger.Error("request_failed", "request_id", id, "provider", provider, "stage", "resolve", "error_code", "INVALID_PROVIDER_RESULT", "status", 500)
 		writePublicError(writer, id, internalError())
 		return
 	}
 	if err := writeSuccess(writer, result.Code); err != nil {
-		h.logger.Warn("response_write_failed", "request_id", id, "provider", "totp", "stage", "response", "error_code", "WRITE_FAILED")
+		h.logger.Warn("response_write_failed", "request_id", id, "provider", provider, "stage", "response", "error_code", "WRITE_FAILED")
+	}
+}
+
+func providerError(err error) *publicError {
+	retry := domain.RetryAfter(err)
+	switch {
+	case errors.Is(err, domain.ErrNoFreshCode):
+		return noFreshCode(retry)
+	case errors.Is(err, domain.ErrAmbiguousCode):
+		return ambiguousCode()
+	case errors.Is(err, domain.ErrSourceCredentials):
+		return sourceCredentialsInvalid()
+	case errors.Is(err, domain.ErrSourceExpired):
+		return sourceExpired()
+	case errors.Is(err, domain.ErrSourceRateLimited):
+		return sourceRateLimited(retry)
+	case errors.Is(err, domain.ErrUpstreamSchemaChanged):
+		return upstreamSchemaChanged()
+	case errors.Is(err, domain.ErrUpstreamFailure):
+		return upstreamFailure()
+	case errors.Is(err, domain.ErrSourceSyncing):
+		return sourceSyncing(retry)
+	default:
+		return nil
 	}
 }
 

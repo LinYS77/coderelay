@@ -57,6 +57,38 @@ func invalidHost() *publicError {
 	return &publicError{Status: 400, Code: "HTTP_ERROR", Message: "The request Host is not allowed"}
 }
 
+func noFreshCode(retry int) *publicError {
+	return &publicError{Status: 404, Code: "NO_FRESH_CODE", Message: "No matching fresh verification code was found", Retryable: true, RetryAfter: retry}
+}
+
+func ambiguousCode() *publicError {
+	return &publicError{Status: 409, Code: "AMBIGUOUS_CODE", Message: "More than one verification code matched equally well"}
+}
+
+func sourceCredentialsInvalid() *publicError {
+	return &publicError{Status: 424, Code: "SOURCE_CREDENTIALS_INVALID", Message: "The supplied upstream credentials are invalid"}
+}
+
+func sourceExpired() *publicError {
+	return &publicError{Status: 424, Code: "SOURCE_EXPIRED_OR_DISABLED", Message: "The upstream source is expired or disabled"}
+}
+
+func sourceRateLimited(retry int) *publicError {
+	return &publicError{Status: 429, Code: "SOURCE_RATE_LIMITED", Message: "The upstream source is rate limited", Retryable: true, RetryAfter: retry}
+}
+
+func upstreamSchemaChanged() *publicError {
+	return &publicError{Status: 502, Code: "UPSTREAM_SCHEMA_CHANGED", Message: "The upstream source returned an unsupported response"}
+}
+
+func upstreamFailure() *publicError {
+	return &publicError{Status: 502, Code: "UPSTREAM_FAILURE", Message: "The upstream source failed", Retryable: true}
+}
+
+func sourceSyncing(retry int) *publicError {
+	return &publicError{Status: 503, Code: "SOURCE_SYNCING", Message: "The upstream source is still syncing", Retryable: true, RetryAfter: retry}
+}
+
 func upstreamTimeout() *publicError {
 	return &publicError{Status: 504, Code: "UPSTREAM_TIMEOUT", Message: "The verification-code operation timed out", Retryable: true}
 }

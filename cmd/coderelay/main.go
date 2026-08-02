@@ -13,6 +13,7 @@ import (
 	"github.com/LinYS77/coderelay/internal/api"
 	"github.com/LinYS77/coderelay/internal/auth"
 	"github.com/LinYS77/coderelay/internal/config"
+	"github.com/LinYS77/coderelay/internal/provider/flysms"
 	"github.com/LinYS77/coderelay/internal/secretfile"
 	"github.com/LinYS77/coderelay/internal/service"
 	"github.com/LinYS77/coderelay/internal/totp"
@@ -64,7 +65,12 @@ func runServe(arguments []string) error {
 		return err
 	}
 	logger := newLogger(cfg.Server.LogLevel)
-	resolver := service.NewResolver(totp.New())
+	flyProvider, err := flysms.New(cfg)
+	if err != nil {
+		return err
+	}
+	defer flyProvider.Close()
+	resolver := service.NewResolver(totp.New(), flyProvider)
 	handler, err := api.NewHandler(cfg, verifier, resolver, logger)
 	if err != nil {
 		return err
@@ -92,7 +98,7 @@ func runValidate(arguments []string) error {
 	}
 	fmt.Fprintf(os.Stdout, "Configuration is valid: %s\n", cfg.ConfigPath)
 	fmt.Fprintln(os.Stdout, "- mode: stateless")
-	fmt.Fprintln(os.Stdout, "- phase: 1 (totp)")
+	fmt.Fprintln(os.Stdout, "- phase: 2 (totp, flysms)")
 	return nil
 }
 

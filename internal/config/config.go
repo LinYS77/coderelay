@@ -1,4 +1,4 @@
-// Package config loads and validates the Phase 1 Go service configuration.
+// Package config loads and validates the Phase 2 Go service configuration.
 package config
 
 import (
@@ -19,13 +19,17 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const maxConfigBytes = 1 << 20
+const (
+	maxConfigBytes = 1 << 20
+	FlySMSBaseURL  = "https://flysms.xyz/icloud/api/pickup/messages"
+)
 
 var ErrInvalid = errors.New("invalid CodeRelay configuration")
 
 type Config struct {
 	Server     ServerConfig   `toml:"server"`
 	Security   SecurityConfig `toml:"security"`
+	Providers  ProviderConfig `toml:"providers"`
 	ConfigPath string         `toml:"-"`
 }
 
@@ -37,6 +41,10 @@ type ServerConfig struct {
 	ForwardedAllowIPs         string   `toml:"forwarded_allow_ips"`
 	AccessLog                 bool     `toml:"access_log"`
 	LogLevel                  string   `toml:"log_level"`
+	MaxWaitSeconds            int      `toml:"max_wait_seconds"`
+	HTTPConnectTimeoutSeconds float64  `toml:"http_connect_timeout_seconds"`
+	HTTPReadTimeoutSeconds    float64  `toml:"http_read_timeout_seconds"`
+	HTTPMaxConnections        int      `toml:"http_max_connections"`
 	MaxInboundConnections     int      `toml:"max_inbound_connections"`
 	MaxConcurrentCodeRequests int      `toml:"max_concurrent_code_requests"`
 	MaxQueuedCodeRequests     int      `toml:"max_queued_code_requests"`
@@ -59,6 +67,18 @@ type SecurityConfig struct {
 	MaxPrincipalRateLimitEntries int      `toml:"max_principal_rate_limit_entries"`
 }
 
+type ProviderConfig struct {
+	FlySMS FlySMSConfig `toml:"flysms"`
+}
+
+type FlySMSConfig struct {
+	BaseURL             string  `toml:"base_url"`
+	FetchTimeoutSeconds float64 `toml:"fetch_timeout_seconds"`
+	PollIntervalSeconds float64 `toml:"poll_interval_seconds"`
+	HistoryLimit        int     `toml:"history_limit"`
+	MaxDetailMessages   int     `toml:"max_detail_messages"`
+}
+
 func Default() Config {
 	return Config{
 		Server: ServerConfig{
@@ -69,6 +89,10 @@ func Default() Config {
 			ForwardedAllowIPs:         "127.0.0.1,::1",
 			AccessLog:                 false,
 			LogLevel:                  "info",
+			MaxWaitSeconds:            30,
+			HTTPConnectTimeoutSeconds: 5,
+			HTTPReadTimeoutSeconds:    20,
+			HTTPMaxConnections:        20,
 			MaxInboundConnections:     128,
 			MaxConcurrentCodeRequests: 20,
 			MaxQueuedCodeRequests:     4,
@@ -87,6 +111,15 @@ func Default() Config {
 			APIRateLimitBurst:            40,
 			MaxIPRateLimitEntries:        10_000,
 			MaxPrincipalRateLimitEntries: 1_000,
+		},
+		Providers: ProviderConfig{
+			FlySMS: FlySMSConfig{
+				BaseURL:             FlySMSBaseURL,
+				FetchTimeoutSeconds: 45,
+				PollIntervalSeconds: 2,
+				HistoryLimit:        30,
+				MaxDetailMessages:   5,
+			},
 		},
 	}
 }
@@ -175,13 +208,22 @@ func (c Config) Validate() error {
 		c.Server.AllowedHosts[i] = normalized
 	}
 	if len(c.Server.CORSOrigins) != 0 {
-		return invalid("CORS must remain disabled in Phase 1")
+		return invalid("CORS must remain disabled in Phase 2")
 	}
 	if c.Server.AccessLog {
 		return invalid("access_log must remain false")
 	}
 	if !slices.Contains([]string{"debug", "info", "warning", "error"}, strings.ToLower(c.Server.LogLevel)) {
 		return invalid("server.log_level is invalid")
+	}
+	if !between(float64(c.Server.MaxWaitSeconds), 0, 60) {
+		return invalid("max_wait_seconds is outside 0..60")
+	}
+	if !between(c.Server.HTTPConnectTimeoutSeconds, 0.1, 30) || !between(c.Server.HTTPReadTimeoutSeconds, 1, 60) {
+		return invalid("HTTP timeout settings are outside their supported range")
+	}
+	if c.Server.HTTPMaxConnections < c.Server.MaxConcurrentCodeRequests || c.Server.HTTPMaxConnections > 100 {
+		return invalid("http_max_connections must cover active requests and remain at most 100")
 	}
 	if _, err := c.TrustedProxyAddrs(); err != nil {
 		return err
@@ -205,18 +247,27 @@ func (c Config) Validate() error {
 		!between(c.Server.ShutdownTimeoutSeconds, 1, 300) {
 		return invalid("one or more server timeouts are outside their supported range")
 	}
-	minimumWrite := c.Server.AdmissionWaitSeconds + 35 + 10
+	minimumWrite := c.Server.AdmissionWaitSeconds + float64(c.Server.MaxWaitSeconds) + c.Providers.FlySMS.FetchTimeoutSeconds + 10
 	if c.Server.WriteTimeoutSeconds < minimumWrite {
-		return invalid("write_timeout_seconds is too short for TOTP operation budget")
+		return invalid("write_timeout_seconds is too short for provider operation budget")
 	}
-	if c.Server.ShutdownTimeoutSeconds < 40 {
-		return invalid("shutdown_timeout_seconds is too short for TOTP operation budget")
+	if c.Server.ShutdownTimeoutSeconds < float64(c.Server.MaxWaitSeconds)+c.Providers.FlySMS.FetchTimeoutSeconds+5 {
+		return invalid("shutdown_timeout_seconds is too short for provider operation budget")
 	}
 	if c.Server.MaxHeaderBytes < 4<<10 || c.Server.MaxHeaderBytes > 64<<10 {
 		return invalid("max_header_bytes is outside 4096..65536")
 	}
 	if c.Server.MaxBodyBytes < 1<<10 || c.Server.MaxBodyBytes > 128<<10 {
 		return invalid("max_body_bytes is outside 1024..131072")
+	}
+	if c.Providers.FlySMS.BaseURL != FlySMSBaseURL {
+		return invalid("providers.flysms.base_url must remain the fixed FlySMS API endpoint")
+	}
+	if !between(c.Providers.FlySMS.FetchTimeoutSeconds, 20, 60) ||
+		!between(c.Providers.FlySMS.PollIntervalSeconds, 1, 10) ||
+		c.Providers.FlySMS.HistoryLimit < 1 || c.Providers.FlySMS.HistoryLimit > 50 ||
+		c.Providers.FlySMS.MaxDetailMessages < 0 || c.Providers.FlySMS.MaxDetailMessages > 10 {
+		return invalid("FlySMS provider limits are outside their supported range")
 	}
 
 	if !c.Security.StrictSecretPermissions {

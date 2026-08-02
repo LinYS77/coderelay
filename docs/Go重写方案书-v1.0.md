@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成；Phase 0、Phase 1 已通过，Phase 2 尚未开始
+> 文档状态：设计完成；Phase 0、Phase 1 已通过；Phase 2 实现与真实 NO_FRESH_CODE 已通过，等待新鲜真实邮件完成 HTTP 200 门禁
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
@@ -1924,6 +1924,8 @@ context cancel/conn deadline
 - 20并发TOTP。
 
 ### Phase 2：FlySMS
+
+正式实现位于 `internal/provider/flysms/`，阶段状态与真实验收记录见 [`docs/Go重写进度.md`](Go重写进度.md)。
 
 - credential parser/SSRF；
 - shared no-cookie transport；

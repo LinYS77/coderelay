@@ -11,6 +11,35 @@ import (
 	"github.com/LinYS77/coderelay/internal/totp"
 )
 
+func TestResolverMapsFlySMSRequest(t *testing.T) {
+	provider := &fakeFlySMSProvider{code: [6]byte{'6', '5', '4', '3', '2', '1'}}
+	resolver := NewResolver(totp.New(), provider)
+	notBefore := time.Now().UTC().Add(-time.Second)
+	command := &domain.Command{
+		Provider:    domain.ProviderFlySMS,
+		Credential:  credential.NewOwned([]byte("fly-request-secret")),
+		NotBefore:   &notBefore,
+		WaitSeconds: 7,
+	}
+	defer command.Destroy()
+	result, err := resolver.Resolve(context.Background(), command)
+	if err != nil || string(result.Code[:]) != "654321" || provider.wait != 7 || provider.notBefore == nil {
+		t.Fatalf("result=%q error=%v wait=%d", result.Code, err, provider.wait)
+	}
+	result.Destroy()
+}
+
+type fakeFlySMSProvider struct {
+	code      [6]byte
+	wait      int
+	notBefore *time.Time
+}
+
+func (p *fakeFlySMSProvider) Resolve(_ context.Context, _ *credential.Secret, notBefore *time.Time, wait int) ([6]byte, error) {
+	p.wait = wait
+	p.notBefore = notBefore
+	return p.code, nil
+}
 func TestResolverMapsTOTPAndDomainErrors(t *testing.T) {
 	provider := totp.NewWithClock(func() time.Time { return time.Unix(1_111_111_111, 0) })
 	resolver := NewResolver(provider)

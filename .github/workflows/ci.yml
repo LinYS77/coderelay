@@ -17,7 +17,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
-  go-phase1:
+  go-phase2:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
@@ -38,20 +38,23 @@ jobs:
         run: |
           test -z "$(gofmt -l cmd internal)"
           go vet ./...
-      - name: Tests, race detector, and Phase 1 acceptance
+      - name: Tests, race detector, and Phase 2 acceptance
         run: |
           go test -count=1 ./...
           go test -race -count=1 ./...
           go test -run '^$' -fuzz FuzzDecodeRootObject -fuzztime=1s ./internal/api
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/totp
-          go test -v -count=1 -run TestTwentyConcurrentTOTPRequestsAreIsolatedAndFast ./internal/api
+          go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/provider/flysms
+          go test -run '^$' -fuzz FuzzResponseContracts -fuzztime=1s ./internal/provider/flysms
+          go test -run '^$' -fuzz FuzzRetryAfter -fuzztime=1s ./internal/provider/flysms
+          go test -v -count=1 -run 'TestTwentyConcurrent(TOTPRequestsAreIsolatedAndFast|CredentialsDoNotCross)' ./internal/api ./internal/provider/flysms
       - name: Staticcheck and reachable vulnerability scan
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
           go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
           govulncheck ./...
-      - name: Static Go Phase 1 build
+      - name: Static Go Phase 2 build
         run: |
           CGO_ENABLED=0 go build -trimpath -tags netgo,osusergo -o /tmp/coderelay-go ./cmd/coderelay
           /tmp/coderelay-go --version

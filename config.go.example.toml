@@ -1,4 +1,4 @@
-# CodeRelay Go Phase 1 configuration.
+# CodeRelay Go Phase 2 configuration.
 # This file is intentionally separate from config.example.toml used by Python 0.3.
 
 [server]
@@ -9,6 +9,10 @@ cors_origins = []
 forwarded_allow_ips = "127.0.0.1,::1"
 access_log = false
 log_level = "info"
+max_wait_seconds = 30
+http_connect_timeout_seconds = 5.0
+http_read_timeout_seconds = 20.0
+http_max_connections = 20
 max_inbound_connections = 128
 max_concurrent_code_requests = 20
 max_queued_code_requests = 4
@@ -20,6 +24,13 @@ idle_timeout_seconds = 60.0
 shutdown_timeout_seconds = 90.0
 max_header_bytes = 16384
 max_body_bytes = 131072
+
+[providers.flysms]
+base_url = "https://flysms.xyz/icloud/api/pickup/messages"
+fetch_timeout_seconds = 45.0
+poll_interval_seconds = 2.0
+history_limit = 30
+max_detail_messages = 5
 
 [security]
 api_token_hash_files = ["secrets/api-shared.sha256"]
