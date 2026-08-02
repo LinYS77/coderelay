@@ -22,6 +22,22 @@ import (
 	"github.com/LinYS77/coderelay/internal/extractor"
 )
 
+func TestProviderUsesConfiguredExtractor(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers.FlySMS.Extractor.Patterns = []string{`(?i)ticket\s+(?P<code>\d{6})`}
+	cfg.Providers.FlySMS.Extractor.AllowGenericFallback = false
+	provider, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	now := time.Now().UTC()
+	code, err := provider.extractor.Extract([]extractor.Message{{ReceivedAt: now, Subject: "Ticket 135790"}}, nil, now)
+	if err != nil || code != "135790" {
+		t.Fatalf("code=%q error=%v", code, err)
+	}
+}
+
 func TestLatestContract(t *testing.T) {
 	now := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC)
 	provider, closeServer := newTestProvider(t, now, func(writer http.ResponseWriter, request *http.Request) {
@@ -352,6 +368,14 @@ func newTestProvider(t *testing.T, now time.Time, handler http.HandlerFunc) (*Pr
 	}
 }
 
+func mustDefaultExtractor() *extractor.Extractor {
+	result, err := extractor.New(extractor.DefaultSettings())
+	if err != nil {
+		panic("invalid default extractor settings")
+	}
+	return result
+}
+
 func testProvider(now time.Time, client httpDoer) *Provider {
 	settings := config.Default().Providers.FlySMS
 	return &Provider{
@@ -361,7 +385,7 @@ func testProvider(now time.Time, client httpDoer) *Provider {
 		networkTimeout: time.Second,
 		fetchTimeout:   2 * time.Second,
 		maxWait:        30,
-		extractor:      extractor.New(extractor.DefaultSettings()),
+		extractor:      mustDefaultExtractor(),
 		now:            func() time.Time { return now },
 		sleep:          sleepContext,
 		jitter:         func(value time.Duration) time.Duration { return value },

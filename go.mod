@@ -8,6 +8,7 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/pelletier/go-toml/v2 v2.4.3
+	golang.org/x/net v0.57.0
 	golang.org/x/text v0.40.0
 )
 

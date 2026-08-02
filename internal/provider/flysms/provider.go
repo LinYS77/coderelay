@@ -48,6 +48,11 @@ func New(cfg config.Config) (*Provider, error) {
 		return nil, errors.New("FlySMS endpoint is invalid")
 	}
 	client, transport := newHTTPClient(cfg.Server)
+	codeExtractor, err := extractor.New(extractorSettings(cfg.Providers.FlySMS.Extractor))
+	if err != nil {
+		transport.CloseIdleConnections()
+		return nil, err
+	}
 	return &Provider{
 		settings:       cfg.Providers.FlySMS,
 		baseURL:        baseURL,
@@ -56,11 +61,24 @@ func New(cfg config.Config) (*Provider, error) {
 		networkTimeout: duration(cfg.Server.HTTPReadTimeoutSeconds),
 		fetchTimeout:   duration(cfg.Providers.FlySMS.FetchTimeoutSeconds),
 		maxWait:        cfg.Server.MaxWaitSeconds,
-		extractor:      extractor.New(extractor.DefaultSettings()),
+		extractor:      codeExtractor,
 		now:            time.Now,
 		sleep:          sleepContext,
 		jitter:         boundedJitter,
 	}, nil
+}
+
+func extractorSettings(value config.ExtractorConfig) extractor.Settings {
+	return extractor.Settings{
+		Senders:                value.Senders,
+		SenderDomains:          value.SenderDomains,
+		SubjectKeywords:        value.SubjectKeywords,
+		Patterns:               value.Patterns,
+		MaxAge:                 time.Duration(value.MaxAgeSeconds) * time.Second,
+		MaxTextChars:           value.MaxTextChars,
+		AllowGenericFallback:   value.AllowGenericFallback,
+		GenericRequiresKeyword: value.GenericRequiresKeyword,
+	}
 }
 
 func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBefore *time.Time, waitSeconds int) ([6]byte, error) {

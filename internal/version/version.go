@@ -2,4 +2,4 @@
 package version
 
 // Value is overridden by -ldflags in release builds.
-var Value = "1.0.0-phase3"
+var Value = "1.0.0-phase4"

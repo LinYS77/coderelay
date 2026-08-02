@@ -1,0 +1,979 @@
+{
+  "schema_version": 1,
+  "oracle": "CodeRelay Python 0.3 canonical extractor",
+  "settings_profiles": {
+    "default": {
+      "senders": [],
+      "sender_domains": [],
+      "subject_keywords": [],
+      "patterns": [],
+      "max_age_seconds": 600,
+      "allow_generic_fallback": true,
+      "generic_requires_keyword": true,
+      "max_text_chars": 100000
+    },
+    "generic_any": {
+      "generic_requires_keyword": false
+    },
+    "no_generic": {
+      "allow_generic_fallback": false
+    },
+    "sender_exact": {
+      "senders": [
+        "ALERTS@EXAMPLE.COM"
+      ]
+    },
+    "sender_domain": {
+      "sender_domains": [
+        "Trusted.Example"
+      ]
+    },
+    "unicode_strasse": {
+      "subject_keywords": [
+        "STRASSE"
+      ]
+    },
+    "unicode_sigma": {
+      "subject_keywords": [
+        "ΟΣ"
+      ]
+    },
+    "global_subject_keyword": {
+      "subject_keywords": [
+        "account alert"
+      ]
+    },
+    "custom": {
+      "patterns": [
+        "(?i)verification\\s+code:\\s*(?P<code>\\d{6})"
+      ],
+      "allow_generic_fallback": true
+    },
+    "custom_only": {
+      "patterns": [
+        "(?i)verification\\s+code:\\s*(?P<code>\\d{6})"
+      ],
+      "allow_generic_fallback": false
+    },
+    "short_age": {
+      "max_age_seconds": 30
+    }
+  },
+  "cases": [
+    {
+      "name": "generic_subject_ascii",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m1",
+          "uid": 1,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Verification code 123456"
+        }
+      ],
+      "expected": {
+        "code": "123456",
+        "error": null
+      }
+    },
+    {
+      "name": "ascii_left_digit_boundary",
+      "settings": "generic_any",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m2",
+          "uid": 2,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Number 9123456"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "ascii_right_digit_boundary",
+      "settings": "generic_any",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m3",
+          "uid": 3,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Number 1234567"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "letters_do_not_block_digit_boundary",
+      "settings": "generic_any",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m4",
+          "uid": 4,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "x123456y"
+        }
+      ],
+      "expected": {
+        "code": "123456",
+        "error": null
+      }
+    },
+    {
+      "name": "unicode_digits_are_not_output",
+      "settings": "generic_any",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m5",
+          "uid": 5,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Code １２３４５６ and ١٢٣٤٥٦"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "unicode_digit_does_not_block_ascii_boundary",
+      "settings": "generic_any",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m6",
+          "uid": 6,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Code ١123456"
+        }
+      ],
+      "expected": {
+        "code": "123456",
+        "error": null
+      }
+    },
+    {
+      "name": "http_url_code_is_removed",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m7",
+          "uid": 7,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "Verification code https://example.test/reset/123456"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "www_url_code_is_removed",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m8",
+          "uid": 8,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "Security code WWW.example.test/654321"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "python_unicode_word_boundary_before_url",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m9",
+          "uid": 9,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "验证码中https://example.test/246810"
+        }
+      ],
+      "expected": {
+        "code": "246810",
+        "error": null
+      }
+    },
+    {
+      "name": "unicode_casefold_strasse_keyword",
+      "settings": "unicode_strasse",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m10",
+          "uid": 10,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "Ihre Straße: 135790"
+        }
+      ],
+      "expected": {
+        "code": "135790",
+        "error": null
+      }
+    },
+    {
+      "name": "unicode_casefold_final_sigma_keyword",
+      "settings": "unicode_sigma",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m11",
+          "uid": 11,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "Ος 975310"
+        }
+      ],
+      "expected": {
+        "code": "975310",
+        "error": null
+      }
+    },
+    {
+      "name": "visible_html_text",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m12",
+          "uid": 12,
+          "received_at": "2026-08-03T11:59:55Z",
+          "html": "<div>Verification <b>code</b>: <span>112233</span></div>"
+        }
+      ],
+      "expected": {
+        "code": "112233",
+        "error": null
+      }
+    },
+    {
+      "name": "html_entities_and_blocks",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m13",
+          "uid": 13,
+          "received_at": "2026-08-03T11:59:55Z",
+          "html": "<p>Security&nbsp;code</p><div>&#54;&#53;&#52;&#51;&#50;&#49;</div>"
+        }
+      ],
+      "expected": {
+        "code": "654321",
+        "error": null
+      }
+    },
+    {
+      "name": "active_and_nonvisible_html_is_skipped",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m14",
+          "uid": 14,
+          "received_at": "2026-08-03T11:59:55Z",
+          "html": "<head>Code 100001</head><script>Code 100002</script><style>Code 100003</style><noscript>Code 100004</noscript><svg>Code 100005</svg><template>Code 100006</template><p>No visible code</p>"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "unclosed_script_hides_remaining_text",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m15",
+          "uid": 15,
+          "received_at": "2026-08-03T11:59:55Z",
+          "html": "<p>Notice</p><script>Verification code 123456"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "visible_text_after_skipped_html",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m16",
+          "uid": 16,
+          "received_at": "2026-08-03T11:59:55Z",
+          "html": "<style>.x{content:'111111'}</style><p>Authentication code 224466</p>"
+        }
+      ],
+      "expected": {
+        "code": "224466",
+        "error": null
+      }
+    },
+    {
+      "name": "sender_exact_display_address",
+      "settings": "sender_exact",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m17",
+          "uid": 17,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "Security Service <Alerts@Example.com>",
+          "subject": "Code 101010"
+        }
+      ],
+      "expected": {
+        "code": "101010",
+        "error": null
+      }
+    },
+    {
+      "name": "sender_exact_rejects_other_address",
+      "settings": "sender_exact",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m18",
+          "uid": 18,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "attacker@example.com",
+          "subject": "Code 202020"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "sender_domain_exact",
+      "settings": "sender_domain",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m19",
+          "uid": 19,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "notify@trusted.example",
+          "subject": "Code 303030"
+        }
+      ],
+      "expected": {
+        "code": "303030",
+        "error": null
+      }
+    },
+    {
+      "name": "sender_domain_subdomain",
+      "settings": "sender_domain",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m20",
+          "uid": 20,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "Service <notify@mail.eu.trusted.example>",
+          "subject": "Code 404040"
+        }
+      ],
+      "expected": {
+        "code": "404040",
+        "error": null
+      }
+    },
+    {
+      "name": "malformed_sender_is_rejected",
+      "settings": "sender_domain",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m21",
+          "uid": 21,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "Service <mail.eu.trusted.example>",
+          "subject": "Code 505050"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "newest_disallowed_sender_falls_back_to_older",
+      "settings": "sender_domain",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "older",
+          "uid": 22,
+          "received_at": "2026-08-03T11:59:40Z",
+          "sender": "notify@trusted.example",
+          "subject": "Code 606060"
+        },
+        {
+          "id": "newer",
+          "uid": 23,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "attacker@example.com",
+          "subject": "Code 707070"
+        }
+      ],
+      "expected": {
+        "code": "606060",
+        "error": null
+      }
+    },
+    {
+      "name": "configured_subject_keyword_global_bonus",
+      "settings": "global_subject_keyword",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m24",
+          "uid": 24,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "account alert ......................................................................................................... 808080"
+        }
+      ],
+      "expected": {
+        "code": "808080",
+        "error": null
+      }
+    },
+    {
+      "name": "ascii_keyword_boundary_rejects_decode",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m25",
+          "uid": 25,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "decode 909090"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "nonascii_keyword_uses_substring",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m26",
+          "uid": 26,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "这是验证码内容 111222"
+        }
+      ],
+      "expected": {
+        "code": "111222",
+        "error": null
+      }
+    },
+    {
+      "name": "custom_pattern_beats_generic_number",
+      "settings": "custom",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m27",
+          "uid": 27,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "Order 999999. Verification code: 123456"
+        }
+      ],
+      "expected": {
+        "code": "123456",
+        "error": null
+      }
+    },
+    {
+      "name": "custom_pattern_order_breaks_score_tie",
+      "settings": {
+        "patterns": [
+          "(?i)ticket\\s+(?P<code>\\d{6})",
+          "(?i)verification\\s+code:\\s*(?P<code>\\d{6})"
+        ],
+        "allow_generic_fallback": false
+      },
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m28",
+          "uid": 28,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "Ticket 111333; verification code: 222444"
+        }
+      ],
+      "expected": {
+        "code": "111333",
+        "error": null
+      }
+    },
+    {
+      "name": "custom_subject_beats_custom_body",
+      "settings": "custom_only",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m29",
+          "uid": 29,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Verification code: 333555",
+          "text": "Verification code: 444666"
+        }
+      ],
+      "expected": {
+        "code": "333555",
+        "error": null
+      }
+    },
+    {
+      "name": "custom_pattern_must_output_ascii",
+      "settings": {
+        "patterns": [
+          "(?P<code>.{6})"
+        ],
+        "allow_generic_fallback": false
+      },
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m30",
+          "uid": 30,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "１２３４５６"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "generic_fallback_disabled",
+      "settings": "no_generic",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m31",
+          "uid": 31,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Verification code 555777"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "generic_requires_keyword",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m32",
+          "uid": 32,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Order 666888 shipped"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "generic_keyword_requirement_disabled",
+      "settings": "generic_any",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m33",
+          "uid": 33,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Order 777999 shipped"
+        }
+      ],
+      "expected": {
+        "code": "777999",
+        "error": null
+      }
+    },
+    {
+      "name": "equal_score_candidates_are_ambiguous",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m34",
+          "uid": 34,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Verification code 123123 and security code 456456"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": "AMBIGUOUS_CODE"
+      }
+    },
+    {
+      "name": "same_code_repeated_is_not_ambiguous",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m35",
+          "uid": 35,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Verification code 121212, again 121212"
+        }
+      ],
+      "expected": {
+        "code": "121212",
+        "error": null
+      }
+    },
+    {
+      "name": "higher_subject_score_beats_body",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m36",
+          "uid": 36,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Verification code 232323",
+          "text": "Security code 343434"
+        }
+      ],
+      "expected": {
+        "code": "232323",
+        "error": null
+      }
+    },
+    {
+      "name": "not_before_rejects_stale_message",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": "2026-08-03T11:59:30Z",
+      "messages": [
+        {
+          "id": "m37",
+          "uid": 37,
+          "received_at": "2026-08-03T11:59:20Z",
+          "subject": "Code 454545"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "not_before_exact_boundary_is_inclusive",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": "2026-08-03T11:59:30Z",
+      "messages": [
+        {
+          "id": "m38",
+          "uid": 38,
+          "received_at": "2026-08-03T11:59:30Z",
+          "subject": "Code 565656"
+        }
+      ],
+      "expected": {
+        "code": "565656",
+        "error": null
+      }
+    },
+    {
+      "name": "maximum_age_rejects_old_message",
+      "settings": "short_age",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m39",
+          "uid": 39,
+          "received_at": "2026-08-03T11:59:29Z",
+          "subject": "Code 676767"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "maximum_age_exact_boundary_is_inclusive",
+      "settings": "short_age",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m40",
+          "uid": 40,
+          "received_at": "2026-08-03T11:59:30Z",
+          "subject": "Code 787878"
+        }
+      ],
+      "expected": {
+        "code": "787878",
+        "error": null
+      }
+    },
+    {
+      "name": "future_message_beyond_five_minutes_rejected",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m41",
+          "uid": 41,
+          "received_at": "2026-08-03T12:05:00.001Z",
+          "subject": "Code 898989"
+        }
+      ],
+      "expected": {
+        "code": null,
+        "error": null
+      }
+    },
+    {
+      "name": "future_message_at_five_minutes_allowed",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m42",
+          "uid": 42,
+          "received_at": "2026-08-03T12:05:00Z",
+          "subject": "Code 909191"
+        }
+      ],
+      "expected": {
+        "code": "909191",
+        "error": null
+      }
+    },
+    {
+      "name": "newest_matching_message_wins",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "old",
+          "uid": 43,
+          "received_at": "2026-08-03T11:59:10Z",
+          "subject": "Code 111444"
+        },
+        {
+          "id": "new",
+          "uid": 44,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Code 222555"
+        }
+      ],
+      "expected": {
+        "code": "222555",
+        "error": null
+      }
+    },
+    {
+      "name": "newest_without_candidate_falls_back_to_older",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "old-code",
+          "uid": 45,
+          "received_at": "2026-08-03T11:59:10Z",
+          "subject": "Code 333666"
+        },
+        {
+          "id": "new-notice",
+          "uid": 46,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "No matching message"
+        }
+      ],
+      "expected": {
+        "code": "333666",
+        "error": null
+      }
+    },
+    {
+      "name": "same_timestamp_higher_uid_wins",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "lower-uid",
+          "uid": 50,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Code 444777"
+        },
+        {
+          "id": "higher-uid",
+          "uid": 51,
+          "received_at": "2026-08-03T11:59:55Z",
+          "subject": "Code 555888"
+        }
+      ],
+      "expected": {
+        "code": "555888",
+        "error": null
+      }
+    },
+    {
+      "name": "sender_unicode_casefold",
+      "settings": {
+        "senders": [
+          "STRASSE@EXAMPLE.COM"
+        ]
+      },
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m47",
+          "uid": 47,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "Service <Straße@Example.com>",
+          "subject": "Code 717171"
+        }
+      ],
+      "expected": {
+        "code": "717171",
+        "error": null
+      }
+    },
+    {
+      "name": "multiple_sender_addresses_follow_raw_fallback",
+      "settings": "sender_domain",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m48",
+          "uid": 48,
+          "received_at": "2026-08-03T11:59:55Z",
+          "sender": "attacker@example.com, notify@trusted.example",
+          "subject": "Code 818181"
+        }
+      ],
+      "expected": {
+        "code": "818181",
+        "error": null
+      }
+    },
+    {
+      "name": "uppercase_and_self_closing_html_blocks",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m49",
+          "uid": 49,
+          "received_at": "2026-08-03T11:59:55Z",
+          "html": "<DIV>One-time<BR/>code 919191</DIV>"
+        }
+      ],
+      "expected": {
+        "code": "919191",
+        "error": null
+      }
+    },
+    {
+      "name": "preview_and_text_are_joined",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m47",
+          "uid": 47,
+          "received_at": "2026-08-03T11:59:55Z",
+          "preview": "Verification code",
+          "text": "616161"
+        }
+      ],
+      "expected": {
+        "code": "616161",
+        "error": null
+      }
+    }
+  ]
+}

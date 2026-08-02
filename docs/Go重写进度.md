@@ -10,16 +10,16 @@
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
 | Phase 3：Outlook 正式实现 | 🟡 实现中 | 正式 Provider 与本地 hardening 已完成；真实 OAuth/XOAUTH2/IMAP、`NO_FRESH_CODE` 错误轮换交付通过，新鲜码/未读保持/soak 仍待完成 |
-| Phase 4：Extractor parity | ⬜ 未开始 |  |
+| Phase 4：Extractor parity | ✅ PASS | 48 个语言无关 golden fixtures；Python 与 Go code/error 结果完全一致，覆盖 ASCII 边界、RE2、casefold、HTML、sender、keyword、fallback、ambiguity、freshness、not_before、最新 UID |
 | Phase 5：并发与安全收口 | ⬜ 未开始 |  |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
-当前生产服务仍为 Python 0.3.0。Go Phase 3 已通过一次正式二进制的真实 OAuth、IMAP 和错误响应轮换门禁，但尚未完成新鲜码 HTTP 200、显式未读状态对照和资源 soak，不能替换生产服务。
+当前生产服务仍为 Python 0.3.0。Go Phase 4 的 extractor parity 已通过；Go Phase 3 尚未完成新鲜码 HTTP 200、显式未读状态对照和资源 soak，不能替换生产服务。
 
 ---
 
-## Phase 1～3 交付（Phase 3 实现阶段）
+## Phase 1～4 交付（Phase 4 Extractor parity）
 
 正式代码位于：
 
@@ -90,6 +90,36 @@ scripts/build-go.sh
 - [x] CGO=0 Linux amd64 静态二进制；
 - [x] Go 1.25.12 / 1.26.5 CI；
 - [x] race、fuzz smoke、staticcheck、govulncheck。
+- [x] Python/Go 共享 `testdata/extractor_golden.json` 语言无关 fixtures（48 cases）；
+- [x] ASCII 六位数字边界、Python lookaround 等价手工扫描和 Unicode 数字拒绝；
+- [x] Go RE2 custom named `code` pattern 与启动时配置校验；
+- [x] Unicode casefold、HTML visible text、script/style/head/noscript/svg/template 跳过；
+- [x] sender exact/domain、subject keyword、custom pattern、generic fallback、ambiguity；
+- [x] `not_before`、最大邮件年龄、未来 5 分钟边界、最新邮件/UID 优先；
+- [x] `PYTHON=python3 ./scripts/verify-extractor-parity.sh`：Python 与 Go code/error 完全一致。
+
+## Phase 4 验收结果
+
+```text
+fixtures: 48
+Python golden: 48/48
+Go golden: 48/48
+code/error mismatch: 0
+Python regression: 113 passed
+Go 1.25.12 / 1.26.5 tests: PASS
+race / vet / staticcheck / govulncheck: PASS
+FuzzExtractor smoke: PASS
+CGO=0 linux/amd64 static build: PASS
+version: CodeRelay Go 1.0.0-phase4
+size: 9,298,082 bytes
+SHA-256: b2db3a18cd314460d1a579de28d3d94ab330e213ad6ff84c8765e807b7d05cbc
+```
+
+执行入口：
+
+```bash
+PYTHON=python3 ./scripts/verify-extractor-parity.sh
+```
 
 ## Phase 1～2 验收结果（Phase 3 之前的已完成门禁）
 
@@ -202,9 +232,9 @@ GitHub CI（Go 1.25.12/1.26.5、Phase 0、Python、binary 共 7 jobs）：https:
 仍待执行：新鲜码 HTTP 200、成功响应 rotation、显式未读状态前后对照、paced 100-cycle/soak
 ```
 
-## Phase 1～3 保留边界
+## Phase 1～4 保留边界
 
-1. Go Phase 3 尚未成为生产替代品；新鲜 Outlook 码、未读保持、Extractor parity、并发 soak 和部署验收仍未完成；
+1. Go 尚未成为生产替代品；新鲜 Outlook 码、未读保持、并发 soak 和部署验收仍未完成；
 2. 正式 Outlook Provider 不得退回复制 Phase 0 throwaway 实现；
 3. 不持久化任何 TOTP Secret、Outlook/FlySMS credential、邮件或验证码；
 4. 不跨请求缓存 TOTP 结果、OAuth access/refresh token 或 IMAP session；

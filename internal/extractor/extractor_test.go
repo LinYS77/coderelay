@@ -10,7 +10,7 @@ import (
 
 func TestExtractFreshCodeFromTextSubjectAndHTML(t *testing.T) {
 	now := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC)
-	extractor := New(DefaultSettings())
+	extractor := mustNew(t, DefaultSettings())
 	cases := []Message{
 		{UID: 1, ReceivedAt: now.Add(-time.Second), Subject: "Notice", Text: "Your verification code is 123456"},
 		{UID: 2, ReceivedAt: now.Add(-time.Second), Subject: "Security code 654321"},
@@ -27,7 +27,7 @@ func TestExtractFreshCodeFromTextSubjectAndHTML(t *testing.T) {
 
 func TestExtractHonorsFreshnessKeywordsURLsAndASCII(t *testing.T) {
 	now := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC)
-	extractor := New(DefaultSettings())
+	extractor := mustNew(t, DefaultSettings())
 	notBefore := now.Add(-time.Minute)
 	messages := []Message{
 		{UID: 4, ReceivedAt: now.Add(-2 * time.Minute), Subject: "Verification code 111111"},
@@ -43,7 +43,7 @@ func TestExtractHonorsFreshnessKeywordsURLsAndASCII(t *testing.T) {
 
 func TestExtractRejectsEqualScoreAmbiguity(t *testing.T) {
 	now := time.Now().UTC()
-	extractor := New(DefaultSettings())
+	extractor := mustNew(t, DefaultSettings())
 	_, err := extractor.Extract([]Message{{ReceivedAt: now, Subject: "verification code 123456 or 654321"}}, nil, now)
 	if !errors.Is(err, domain.ErrAmbiguousCode) {
 		t.Fatalf("error=%v", err)
@@ -52,7 +52,7 @@ func TestExtractRejectsEqualScoreAmbiguity(t *testing.T) {
 
 func TestNewestMessageAndUIDWin(t *testing.T) {
 	now := time.Now().UTC()
-	extractor := New(DefaultSettings())
+	extractor := mustNew(t, DefaultSettings())
 	code, err := extractor.Extract([]Message{
 		{UID: 1, ReceivedAt: now.Add(-time.Second), Subject: "verification code 111111"},
 		{UID: 2, ReceivedAt: now.Add(-time.Second), Subject: "verification code 222222"},
@@ -60,4 +60,13 @@ func TestNewestMessageAndUIDWin(t *testing.T) {
 	if err != nil || code != "222222" {
 		t.Fatalf("code=%q error=%v", code, err)
 	}
+}
+
+func mustNew(t *testing.T, settings Settings) *Extractor {
+	t.Helper()
+	extractor, err := New(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return extractor
 }

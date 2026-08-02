@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成；Phase 0、Phase 1、Phase 2 已通过，Phase 3 实现中
+> 文档状态：设计完成；Phase 0、Phase 1、Phase 2、Phase 4 已通过，Phase 3 真实验收未完成
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
@@ -1193,7 +1193,7 @@ email---token---https://flysms.xyz/icloud/pickup#email=...&key=...
 Go RE2 不支持 lookbehind/lookahead，因此不直接移植：
 
 ```regex
-(?<!\d)\d{6}(?!\d)
+(?<![0-9])([0-9]{6})(?![0-9])
 ```
 
 实现方式：扫描恰好六位ASCII digit run，并手工检查前后byte不是ASCII数字。
@@ -2004,7 +2004,7 @@ Go 1.0.0 只有全部满足才可替代 Python：
 - [ ] Outlook batch FETCH通过；
 - [ ] Outlook token rotation在成功和错误响应均通过；
 - [x] FlySMS真实邮件读取通过；
-- [ ] Python extractor golden parity通过；
+- [x] Python extractor golden parity通过；
 - [ ] `go test -race ./...`通过；
 - [ ] fuzz smoke通过；
 - [ ] 60分钟单核soak通过；

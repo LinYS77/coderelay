@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from coderelay.config import AppConfig, ConfigError, load_config
+from coderelay.config import AppConfig, ConfigError, ExtractorSettings, load_config
 from coderelay.security import SecretFileError, generate_api_token, hash_api_token, read_secret, verify_api_token
 
 
@@ -45,6 +45,25 @@ def test_load_config_reports_invalid_toml(tmp_path: Path) -> None:
     path.write_text("[[bad", encoding="utf-8")
     with pytest.raises(ConfigError, match="invalid TOML"):
         load_config(path)
+
+
+def test_extractor_settings_normalize_casefold_and_reject_non_re2() -> None:
+    settings = ExtractorSettings(
+        senders=[" Alerts@Example.com ", "alerts@example.com"],
+        sender_domains=[" @Trusted.Example "],
+        subject_keywords=[" Straße ", "STRASSE"],
+    )
+    assert settings.senders == ["alerts@example.com"]
+    assert settings.sender_domains == ["trusted.example"]
+    assert settings.subject_keywords == ["strasse"]
+
+    for pattern in (
+        r"(?P<code>[0-9]{6})(?=x)",
+        r"(?P<code>[0-9]{6})\1",
+        r"([0-9]{6})",
+    ):
+        with pytest.raises(ValueError):
+            ExtractorSettings(patterns=[pattern])
 
 
 def test_api_token_hash_and_verification() -> None:

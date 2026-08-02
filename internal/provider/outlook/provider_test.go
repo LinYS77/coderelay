@@ -12,7 +12,24 @@ import (
 	"github.com/LinYS77/coderelay/internal/config"
 	"github.com/LinYS77/coderelay/internal/credential"
 	"github.com/LinYS77/coderelay/internal/domain"
+	"github.com/LinYS77/coderelay/internal/extractor"
 )
+
+func TestProviderUsesConfiguredExtractor(t *testing.T) {
+	cfg := config.Default()
+	cfg.Providers.Outlook.Extractor.Patterns = []string{`(?i)ticket\s+(?P<code>\d{6})`}
+	cfg.Providers.Outlook.Extractor.AllowGenericFallback = false
+	provider, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer provider.Close()
+	now := time.Now().UTC()
+	code, err := provider.extractor.Extract([]extractor.Message{{ReceivedAt: now, Subject: "Ticket 246810"}}, nil, now)
+	if err != nil || code != "246810" {
+		t.Fatalf("code=%q error=%v", code, err)
+	}
+}
 
 func TestProviderReturnsRotationWhenIMAPFails(t *testing.T) {
 	rotated := testRefreshToken('z')

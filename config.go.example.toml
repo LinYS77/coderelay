@@ -1,5 +1,5 @@
-# CodeRelay Go Phase 3 configuration.
-# Go Phase 3 configuration is intentionally separate from config.example.toml used by Python 0.3.
+# CodeRelay Go Phase 4 configuration.
+# Go Phase 4 configuration is intentionally separate from config.example.toml used by Python 0.3.
 
 [server]
 host = "127.0.0.1"
@@ -34,12 +34,32 @@ poll_interval_seconds = 2.0
 max_messages = 10
 max_message_bytes = 262144
 
+[providers.outlook.extractor]
+senders = []
+sender_domains = []
+subject_keywords = ["verification", "security code", "验证码"]
+patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']
+max_age_seconds = 600
+allow_generic_fallback = true
+generic_requires_keyword = false
+max_text_chars = 100000
+
 [providers.flysms]
 base_url = "https://flysms.xyz/icloud/api/pickup/messages"
 fetch_timeout_seconds = 45.0
 poll_interval_seconds = 2.0
 history_limit = 30
 max_detail_messages = 5
+
+[providers.flysms.extractor]
+senders = []
+sender_domains = []
+subject_keywords = ["verification", "security code", "验证码"]
+patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']
+max_age_seconds = 600
+allow_generic_fallback = true
+generic_requires_keyword = false
+max_text_chars = 100000
 
 [security]
 api_token_hash_files = ["secrets/api-shared.sha256"]

@@ -10,13 +10,16 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/text/cases"
 )
 
 const (
@@ -76,21 +79,34 @@ type ProviderConfig struct {
 }
 
 type OutlookConfig struct {
-	TokenURL            string  `toml:"token_url"`
-	IMAPHost            string  `toml:"imap_host"`
-	IMAPPort            int     `toml:"imap_port"`
-	IMAPTimeoutSeconds  float64 `toml:"imap_timeout_seconds"`
-	PollIntervalSeconds float64 `toml:"poll_interval_seconds"`
-	MaxMessages         int     `toml:"max_messages"`
-	MaxMessageBytes     int64   `toml:"max_message_bytes"`
+	TokenURL            string          `toml:"token_url"`
+	IMAPHost            string          `toml:"imap_host"`
+	IMAPPort            int             `toml:"imap_port"`
+	IMAPTimeoutSeconds  float64         `toml:"imap_timeout_seconds"`
+	PollIntervalSeconds float64         `toml:"poll_interval_seconds"`
+	MaxMessages         int             `toml:"max_messages"`
+	MaxMessageBytes     int64           `toml:"max_message_bytes"`
+	Extractor           ExtractorConfig `toml:"extractor"`
 }
 
 type FlySMSConfig struct {
-	BaseURL             string  `toml:"base_url"`
-	FetchTimeoutSeconds float64 `toml:"fetch_timeout_seconds"`
-	PollIntervalSeconds float64 `toml:"poll_interval_seconds"`
-	HistoryLimit        int     `toml:"history_limit"`
-	MaxDetailMessages   int     `toml:"max_detail_messages"`
+	BaseURL             string          `toml:"base_url"`
+	FetchTimeoutSeconds float64         `toml:"fetch_timeout_seconds"`
+	PollIntervalSeconds float64         `toml:"poll_interval_seconds"`
+	HistoryLimit        int             `toml:"history_limit"`
+	MaxDetailMessages   int             `toml:"max_detail_messages"`
+	Extractor           ExtractorConfig `toml:"extractor"`
+}
+
+type ExtractorConfig struct {
+	Senders                []string `toml:"senders"`
+	SenderDomains          []string `toml:"sender_domains"`
+	SubjectKeywords        []string `toml:"subject_keywords"`
+	Patterns               []string `toml:"patterns"`
+	MaxAgeSeconds          int      `toml:"max_age_seconds"`
+	AllowGenericFallback   bool     `toml:"allow_generic_fallback"`
+	GenericRequiresKeyword bool     `toml:"generic_requires_keyword"`
+	MaxTextChars           int      `toml:"max_text_chars"`
 }
 
 func Default() Config {
@@ -135,6 +151,7 @@ func Default() Config {
 				PollIntervalSeconds: 2,
 				MaxMessages:         10,
 				MaxMessageBytes:     256 << 10,
+				Extractor:           DefaultExtractorConfig(),
 			},
 			FlySMS: FlySMSConfig{
 				BaseURL:             FlySMSBaseURL,
@@ -142,8 +159,22 @@ func Default() Config {
 				PollIntervalSeconds: 2,
 				HistoryLimit:        30,
 				MaxDetailMessages:   5,
+				Extractor:           DefaultExtractorConfig(),
 			},
 		},
+	}
+}
+
+func DefaultExtractorConfig() ExtractorConfig {
+	return ExtractorConfig{
+		Senders:                []string{},
+		SenderDomains:          []string{},
+		SubjectKeywords:        []string{},
+		Patterns:               []string{},
+		MaxAgeSeconds:          600,
+		AllowGenericFallback:   true,
+		GenericRequiresKeyword: true,
+		MaxTextChars:           100_000,
 	}
 }
 
@@ -201,6 +232,14 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("%w: API token hash path is invalid", ErrInvalid)
 		}
 		cfg.Security.APITokenHashFiles[i] = resolved
+	}
+	cfg.Providers.Outlook.Extractor, err = normalizeExtractorConfig(cfg.Providers.Outlook.Extractor)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Providers.FlySMS.Extractor, err = normalizeExtractorConfig(cfg.Providers.FlySMS.Extractor)
+	if err != nil {
+		return Config{}, err
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -292,6 +331,9 @@ func (c Config) Validate() error {
 		c.Providers.Outlook.MaxMessageBytes < 32<<10 || c.Providers.Outlook.MaxMessageBytes > 1<<20 {
 		return invalid("Outlook provider limits are outside their supported range")
 	}
+	if _, err := normalizeExtractorConfig(c.Providers.Outlook.Extractor); err != nil {
+		return err
+	}
 	if c.Providers.FlySMS.BaseURL != FlySMSBaseURL {
 		return invalid("providers.flysms.base_url must remain the fixed FlySMS API endpoint")
 	}
@@ -300,6 +342,9 @@ func (c Config) Validate() error {
 		c.Providers.FlySMS.HistoryLimit < 1 || c.Providers.FlySMS.HistoryLimit > 50 ||
 		c.Providers.FlySMS.MaxDetailMessages < 0 || c.Providers.FlySMS.MaxDetailMessages > 10 {
 		return invalid("FlySMS provider limits are outside their supported range")
+	}
+	if _, err := normalizeExtractorConfig(c.Providers.FlySMS.Extractor); err != nil {
+		return err
 	}
 
 	if !c.Security.StrictSecretPermissions {
@@ -329,6 +374,77 @@ func (c Config) Validate() error {
 		return invalid("rate-limit map capacity is invalid")
 	}
 	return nil
+}
+
+func normalizeExtractorConfig(value ExtractorConfig) (ExtractorConfig, error) {
+	if len(value.Senders) > 100 || len(value.SenderDomains) > 100 || len(value.SubjectKeywords) > 100 || len(value.Patterns) > 20 {
+		return ExtractorConfig{}, invalid("extractor list limits are exceeded")
+	}
+	fold := cases.Fold()
+	normalizeList := func(values []string, discardBlank bool) ([]string, error) {
+		result := make([]string, 0, len(values))
+		seen := make(map[string]struct{}, len(values))
+		for _, item := range values {
+			item = fold.String(strings.TrimSpace(item))
+			if item == "" {
+				if discardBlank {
+					continue
+				}
+				return nil, invalid("extractor list contains a blank value")
+			}
+			if _, duplicate := seen[item]; duplicate {
+				continue
+			}
+			seen[item] = struct{}{}
+			result = append(result, item)
+		}
+		return result, nil
+	}
+	var err error
+	value.Senders, err = normalizeList(value.Senders, true)
+	if err != nil {
+		return ExtractorConfig{}, err
+	}
+	value.SubjectKeywords, err = normalizeList(value.SubjectKeywords, true)
+	if err != nil {
+		return ExtractorConfig{}, err
+	}
+	domains := make([]string, len(value.SenderDomains))
+	for index, domain := range value.SenderDomains {
+		domains[index] = strings.TrimLeft(strings.TrimSpace(domain), "@")
+	}
+	value.SenderDomains, err = normalizeList(domains, false)
+	if err != nil {
+		return ExtractorConfig{}, err
+	}
+	for _, domain := range value.SenderDomains {
+		if !strings.Contains(domain, ".") || strings.IndexFunc(domain, unicode.IsSpace) >= 0 {
+			return ExtractorConfig{}, invalid("extractor sender domain is invalid")
+		}
+	}
+	if value.MaxAgeSeconds < 30 || value.MaxAgeSeconds > 86_400 || value.MaxTextChars < 1_000 || value.MaxTextChars > 1_000_000 {
+		return ExtractorConfig{}, invalid("extractor age or text limit is invalid")
+	}
+	value.Patterns = append([]string(nil), value.Patterns...)
+	for _, pattern := range value.Patterns {
+		if utf8.RuneCountInString(pattern) > 512 {
+			return ExtractorConfig{}, invalid("extractor pattern is too long")
+		}
+		compiled, compileErr := regexp.Compile(pattern)
+		if compileErr != nil {
+			return ExtractorConfig{}, invalid("extractor pattern is not valid RE2")
+		}
+		codeGroups := 0
+		for _, name := range compiled.SubexpNames() {
+			if name == "code" {
+				codeGroups++
+			}
+		}
+		if codeGroups != 1 {
+			return ExtractorConfig{}, invalid("extractor pattern must define one named code group")
+		}
+	}
+	return value, nil
 }
 
 func (c Config) Address() string {

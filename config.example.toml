@@ -31,6 +31,7 @@ max_messages = 10
 max_message_bytes = 262144
 
 [providers.outlook.extractor]
+senders = []
 sender_domains = []
 subject_keywords = ["verification", "security code", "验证码"]
 patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']
@@ -46,6 +47,7 @@ history_limit = 30
 max_detail_messages = 5
 
 [providers.flysms.extractor]
+senders = []
 sender_domains = []
 subject_keywords = ["verification", "security code", "验证码"]
 patterns = ['(?i)(?:code|验证码|安全码)\D{0,20}(?P<code>\d{6})']

@@ -13,6 +13,42 @@ class ConfigError(ValueError):
     """Raised when the service configuration cannot be loaded safely."""
 
 
+def _validate_re2_subset(pattern: str) -> None:
+    """Reject Python regexp constructs that Go's RE2 engine cannot compile."""
+    unsupported_groups = ("(?=", "(?!", "(?<=", "(?<!", "(?P=", "(?>", "(?#", "(?(")
+    escaped = False
+    in_class = False
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if escaped:
+            if character in "123456789" or character in {"k", "g"}:
+                raise ValueError("extractor patterns must use the common RE2 subset")
+            escaped = False
+            index += 1
+            continue
+        if character == "\\":
+            escaped = True
+            index += 1
+            continue
+        if character == "[":
+            in_class = True
+            index += 1
+            continue
+        if character == "]" and in_class:
+            in_class = False
+            index += 1
+            continue
+        if not in_class:
+            if any(pattern.startswith(prefix, index) for prefix in unsupported_groups):
+                raise ValueError("extractor patterns must use the common RE2 subset")
+            if character in "*+?" and index + 1 < len(pattern) and pattern[index + 1] == "+":
+                raise ValueError("extractor patterns must use the common RE2 subset")
+            if character == "}" and index + 1 < len(pattern) and pattern[index + 1] == "+":
+                raise ValueError("extractor patterns must use the common RE2 subset")
+        index += 1
+
+
 class ServerSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -99,8 +135,9 @@ class ExtractorSettings(BaseModel):
         for pattern in values:
             if len(pattern) > 512:
                 raise ValueError("extractor patterns cannot exceed 512 characters")
+            _validate_re2_subset(pattern)
             try:
-                compiled = re.compile(pattern)
+                compiled = re.compile(pattern, re.ASCII)
             except re.error as exc:
                 raise ValueError(f"invalid extractor regex: {exc}") from exc
             if "code" not in compiled.groupindex:

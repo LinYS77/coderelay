@@ -42,6 +42,10 @@ func New(cfg config.Config) (*Provider, error) {
 	if settings.IMAPTimeoutSeconds < 3 || settings.IMAPTimeoutSeconds > 60 || settings.PollIntervalSeconds < 1 || settings.PollIntervalSeconds > 10 || settings.MaxMessages < 1 || settings.MaxMessages > 50 || settings.MaxMessageBytes < 32<<10 || settings.MaxMessageBytes > 1<<20 {
 		return nil, errors.New("outlook provider limits are invalid")
 	}
+	codeExtractor, err := extractor.New(extractorSettings(settings.Extractor))
+	if err != nil {
+		return nil, err
+	}
 	oauth, err := NewOAuthClient(cfg.Server, settings)
 	if err != nil {
 		return nil, err
@@ -50,7 +54,7 @@ func New(cfg config.Config) (*Provider, error) {
 	return &Provider{
 		settings:   settings,
 		oauth:      oauth,
-		extractor:  extractor.New(extractor.DefaultSettings()),
+		extractor:  codeExtractor,
 		maxWait:    cfg.Server.MaxWaitSeconds,
 		now:        time.Now,
 		sleep:      sleepContext,
@@ -66,7 +70,7 @@ func newProviderForTest(settings config.OutlookConfig, oauth *OAuthClient) *Prov
 	return &Provider{
 		settings:   settings,
 		oauth:      oauth,
-		extractor:  extractor.New(extractor.DefaultSettings()),
+		extractor:  mustDefaultExtractor(),
 		maxWait:    30,
 		now:        time.Now,
 		sleep:      sleepContext,
@@ -75,6 +79,27 @@ func newProviderForTest(settings config.OutlookConfig, oauth *OAuthClient) *Prov
 		lifecycle:  lifecycle,
 		cancelLife: cancelLife,
 	}
+}
+
+func extractorSettings(value config.ExtractorConfig) extractor.Settings {
+	return extractor.Settings{
+		Senders:                value.Senders,
+		SenderDomains:          value.SenderDomains,
+		SubjectKeywords:        value.SubjectKeywords,
+		Patterns:               value.Patterns,
+		MaxAge:                 time.Duration(value.MaxAgeSeconds) * time.Second,
+		MaxTextChars:           value.MaxTextChars,
+		AllowGenericFallback:   value.AllowGenericFallback,
+		GenericRequiresKeyword: value.GenericRequiresKeyword,
+	}
+}
+
+func mustDefaultExtractor() *extractor.Extractor {
+	result, err := extractor.New(extractor.DefaultSettings())
+	if err != nil {
+		panic("invalid default extractor settings")
+	}
+	return result
 }
 
 func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBefore *time.Time, waitSeconds int) ([6]byte, *domain.CredentialUpdate, error) {

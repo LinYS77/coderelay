@@ -266,6 +266,7 @@ class OutlookImapProvider(CodeProvider):
             received_at=received_at,
             text=text,
             html=html,
+            provider_sequence=int(uid),
         )
 
     def _invalidate_access_token(self) -> None:

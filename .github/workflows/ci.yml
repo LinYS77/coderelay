@@ -17,7 +17,7 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
-  go-phase3:
+  go-phase4:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
@@ -38,7 +38,7 @@ jobs:
         run: |
           test -z "$(gofmt -l cmd internal)"
           go vet ./...
-      - name: Tests, race detector, and Phase 3 acceptance
+      - name: Tests, race detector, and Phase 4 acceptance
         run: |
           go test -count=1 ./...
           go test -race -count=1 ./...
@@ -47,6 +47,7 @@ jobs:
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/provider/outlook
           go test -run '^$' -fuzz FuzzMIME -fuzztime=1s ./internal/provider/outlook
+          go test -run '^$' -fuzz FuzzExtractor -fuzztime=1s ./internal/extractor
           go test -run '^$' -fuzz FuzzResponseContracts -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzRetryAfter -fuzztime=1s ./internal/provider/flysms
           go test -v -count=1 -run 'TestTwentyConcurrent(TOTPRequestsAreIsolatedAndFast|CredentialsDoNotCross)' ./internal/api ./internal/provider/flysms
@@ -56,7 +57,7 @@ jobs:
           staticcheck ./...
           go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
           govulncheck ./...
-      - name: Static Go Phase 3 build
+      - name: Static Go Phase 4 build
         run: |
           CGO_ENABLED=0 go build -trimpath -tags netgo,osusergo -o /tmp/coderelay-go ./cmd/coderelay
           /tmp/coderelay-go --version
@@ -116,8 +117,9 @@ jobs:
           python -m pip install --no-deps .
       - name: Static checks
         run: |
-          ruff check coderelay tests binary_entry.py
-          python -m compileall -q coderelay binary_entry.py
+          ruff check coderelay tests scripts/export-extractor-golden.py binary_entry.py
+          python -m compileall -q coderelay tests scripts/export-extractor-golden.py binary_entry.py
+          python scripts/export-extractor-golden.py --check
           python -m pip check
       - name: Tests
         run: pytest -q

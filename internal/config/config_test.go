@@ -24,6 +24,9 @@ func TestGoExampleConfigLoadsAndIsBounded(t *testing.T) {
 	if cfg.Security.APIRateLimitBurst != 40 || cfg.Security.APIRateLimitPerMinute != 240 {
 		t.Fatal("rate defaults are wrong")
 	}
+	if len(cfg.Providers.Outlook.Extractor.Patterns) != 1 || cfg.Providers.Outlook.Extractor.GenericRequiresKeyword || len(cfg.Providers.FlySMS.Extractor.Patterns) != 1 {
+		t.Fatal("extractor configuration was not loaded")
+	}
 	if !filepath.IsAbs(cfg.Security.APITokenHashFiles[0]) {
 		t.Fatal("token hash path was not resolved")
 	}
@@ -61,6 +64,53 @@ func TestConfigRejectsUnknownLegacyAndUnsafeFields(t *testing.T) {
 		path := writeConfig(t, value)
 		if _, err := Load(path); !errors.Is(err, ErrInvalid) {
 			t.Errorf("unsafe config unexpectedly accepted; error=%v", err)
+		}
+	}
+}
+
+func TestExtractorConfigNormalizesAndRejectsNonRE2(t *testing.T) {
+	valid := `[providers.outlook.extractor]
+senders=[" ALERTS@Example.com ", "alerts@example.com"]
+sender_domains=[" @Trusted.Example "]
+subject_keywords=[" Straße ", "STRASSE"]
+patterns=['(?i)code\s*(?P<code>\d{6})']
+max_age_seconds=30
+allow_generic_fallback=false
+generic_requires_keyword=false
+max_text_chars=1000
+[security]
+api_token_hash_files=["x"]
+`
+	cfg, err := Load(writeConfig(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := cfg.Providers.Outlook.Extractor
+	if len(settings.Senders) != 1 || settings.Senders[0] != "alerts@example.com" || len(settings.SenderDomains) != 1 || settings.SenderDomains[0] != "trusted.example" {
+		t.Fatalf("normalized sender settings = %+v", settings)
+	}
+	if len(settings.SubjectKeywords) != 1 || settings.SubjectKeywords[0] != "strasse" || settings.AllowGenericFallback || settings.GenericRequiresKeyword {
+		t.Fatalf("normalized keyword settings = %+v", settings)
+	}
+
+	invalidPatterns := []string{
+		`(?P<code>[0-9]{6})(?=x)`,
+		`(?P<code>[0-9]{6})\1`,
+		`([0-9]{6})`,
+	}
+	for _, pattern := range invalidPatterns {
+		value := "[providers.outlook.extractor]\npatterns=['" + pattern + "']\n[security]\napi_token_hash_files=['x']\n"
+		if _, err := Load(writeConfig(t, value)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("non-RE2 or unnamed pattern %q accepted: %v", pattern, err)
+		}
+	}
+	for _, value := range []string{
+		"[providers.outlook.extractor]\nsender_domains=['invalid']\n[security]\napi_token_hash_files=['x']\n",
+		"[providers.outlook.extractor]\nmax_age_seconds=29\n[security]\napi_token_hash_files=['x']\n",
+		"[providers.outlook.extractor]\nmax_text_chars=999\n[security]\napi_token_hash_files=['x']\n",
+	} {
+		if _, err := Load(writeConfig(t, value)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("invalid extractor bounds accepted: %v", err)
 		}
 	}
 }

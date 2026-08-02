@@ -18,12 +18,13 @@ https://2fa.077.li
 
 完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)。
 
-面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)，实施状态见 [`docs/Go重写进度.md`](docs/Go重写进度.md)。Phase 0、Phase 1 和 Phase 2 均已通过；Phase 3 正式 Provider 已通过真实 OAuth/IMAP 与错误响应轮换门禁，但新鲜码、未读状态对照和资源 soak 尚未完成，因此生产实现仍为 Python 0.3.0。
+面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)，实施状态见 [`docs/Go重写进度.md`](docs/Go重写进度.md)。Phase 0、Phase 1、Phase 2 和 Phase 4 extractor parity 均已通过；Phase 3 正式 Provider 已通过真实 OAuth/IMAP 与错误响应轮换门禁，但新鲜码、未读状态对照和资源 soak 尚未完成，因此生产实现仍为 Python 0.3.0。
 
-Go Phase 3 本地验证与构建：
+Go Phase 4 本地验证与构建：
 
 ```bash
 GOTOOLCHAIN=go1.26.5 go test -race ./...
+PYTHON=python3 ./scripts/verify-extractor-parity.sh
 ./scripts/build-go.sh
 cp config.go.example.toml config.go.toml
 ./dist/coderelay-go generate-api-token --hash-file secrets/api.sha256

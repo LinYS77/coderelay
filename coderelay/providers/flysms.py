@@ -141,6 +141,7 @@ class FlySmsProvider(CodeProvider):
             received_at=received_at,
             text=require_text(raw.get("text"), maximum=1_000_000),
             html=require_text(raw.get("html"), maximum=2_000_000, nullable=True),
+            provider_sequence=uid,
         )
 
     def _parse_summaries(self, value: object) -> list[MailMessage]:
@@ -167,6 +168,7 @@ class FlySmsProvider(CodeProvider):
                     sender=require_text(raw.get("from"), maximum=4_096),
                     received_at=parse_iso_datetime(raw.get("date")),
                     preview=require_text(raw.get("preview"), maximum=100_000),
+                    provider_sequence=uid,
                 )
             )
         return messages

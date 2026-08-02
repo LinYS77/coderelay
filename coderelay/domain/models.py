@@ -54,6 +54,7 @@ class MailMessage:
     preview: str = ""
     text: str = ""
     html: str = ""
+    provider_sequence: int = 0
 
 
 @dataclass(frozen=True, slots=True)

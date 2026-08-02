@@ -12,7 +12,7 @@ from coderelay.config import ExtractorSettings
 from coderelay.domain.errors import AmbiguousCode
 from coderelay.domain.models import ExtractedCode, MailMessage
 
-_GENERIC_CODE_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
+_GENERIC_CODE_RE = re.compile(r"(?<![0-9])([0-9]{6})(?![0-9])")
 _URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
 _WHITESPACE_RE = re.compile(r"\s+")
 _DEFAULT_KEYWORDS = (
@@ -100,7 +100,7 @@ class _Candidate:
 class CodeExtractor:
     def __init__(self, settings: ExtractorSettings) -> None:
         self.settings = settings
-        self._patterns = [re.compile(pattern) for pattern in settings.patterns]
+        self._patterns = [re.compile(pattern, re.ASCII) for pattern in settings.patterns]
         self._keywords = tuple(dict.fromkeys((*_DEFAULT_KEYWORDS, *settings.subject_keywords)))
 
     def extract(
@@ -115,7 +115,11 @@ class CodeExtractor:
         if not_before is not None:
             lower_bound = max(lower_bound, normalize_datetime(not_before))
 
-        ordered = sorted(messages, key=lambda item: normalize_datetime(item.received_at), reverse=True)
+        ordered = sorted(
+            messages,
+            key=lambda item: (normalize_datetime(item.received_at), item.provider_sequence),
+            reverse=True,
+        )
         for message in ordered:
             received_at = normalize_datetime(message.received_at)
             if received_at < lower_bound or received_at > now + timedelta(minutes=5):
@@ -170,8 +174,8 @@ class CodeExtractor:
     def _collect_custom(self, text: str, *, is_subject: bool, candidates: dict[str, _Candidate]) -> None:
         for pattern_index, pattern in enumerate(self._patterns):
             for match in pattern.finditer(text):
-                code = match.groupdict().get("code", "")
-                if not re.fullmatch(r"\d{6}", code):
+                code = match.groupdict().get("code") or ""
+                if not re.fullmatch(r"[0-9]{6}", code, flags=re.ASCII):
                     continue
                 score = (140 if is_subject else 110) + self._context_score(text, match.start()) - pattern_index
                 self._keep_best(candidates, _Candidate(code=code, score=score, position=match.start()))
