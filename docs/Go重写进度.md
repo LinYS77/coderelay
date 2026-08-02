@@ -113,6 +113,7 @@ CGO=0 linux/amd64 static build: PASS
 version: CodeRelay Go 1.0.0-phase4
 size: 9,298,082 bytes
 SHA-256: b2db3a18cd314460d1a579de28d3d94ab330e213ad6ff84c8765e807b7d05cbc
+GitHub CI: https://github.com/LinYS77/coderelay/actions/runs/30742853076（7/7 jobs success）
 ```
 
 执行入口：
@@ -227,7 +228,6 @@ OAuth refresh + IMAP XOAUTH2 + readonly batch FETCH：PASS（HTTP 404 NO_FRESH_C
 错误响应 credential_update：PASS；轮换 token 已写入新的 caller-managed 0600 文件
 SIGTERM graceful shutdown：exit 0
 服务日志 email/refresh token/code 扫描：0 matches
-GitHub CI（Go 1.25.12/1.26.5、Phase 0、Python、binary 共 7 jobs）：https://github.com/LinYS77/coderelay/actions/runs/30740666764（7/7 success）
 
 仍待执行：新鲜码 HTTP 200、成功响应 rotation、显式未读状态前后对照、paced 100-cycle/soak
 ```
