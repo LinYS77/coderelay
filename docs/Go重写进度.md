@@ -154,6 +154,7 @@ supply chain:
   binary size: 9,314,466 bytes
   SHA-256: ae5f12a0a8ff72394d903e9ef8ad06b81a1a141781be435825513a24f17642b9
   CycloneDX SBOM 1.6 / cyclonedx-gomod v1.10.0: PASS
+  GitHub CI: https://github.com/LinYS77/coderelay/actions/runs/30747314889 (5/5 jobs, 60/60 steps)
 Go-only cleanup:
   legacy runtime/build artifacts: 0
   current-tree legacy artifacts: 0
