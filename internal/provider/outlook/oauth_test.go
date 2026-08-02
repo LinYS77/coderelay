@@ -67,8 +67,8 @@ func TestOAuthRefreshMapsErrorsWithoutEchoingBody(t *testing.T) {
 	}{
 		{"reauth", http.StatusBadRequest, `{"error":"invalid_grant","error_description":"secret-body-must-not-escape"}`, domain.ErrSourceReauthRequired},
 		{"credentials", http.StatusUnauthorized, `{"error":"bad"}`, domain.ErrSourceCredentials},
-		{"rate", http.StatusTooManyRequests, `{}`, domain.ErrSourceRateLimited},
-		{"upstream", http.StatusBadGateway, `{}`, domain.ErrUpstreamFailure},
+		{"rate", http.StatusTooManyRequests, `temporarily unavailable`, domain.ErrSourceRateLimited},
+		{"upstream", http.StatusBadGateway, `<html>gateway failure</html>`, domain.ErrUpstreamFailure},
 		{"schema", http.StatusOK, `{"access_token":1}`, domain.ErrUpstreamSchemaChanged},
 	}
 	for _, test := range cases {

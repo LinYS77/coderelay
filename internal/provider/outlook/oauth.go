@@ -138,10 +138,13 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, c.endpoint, bytes.NewReader(form))
+	requestBody := io.NopCloser(bytes.NewReader(form))
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, c.endpoint, requestBody)
 	if err != nil {
 		return nil, domain.ErrUpstreamFailure
 	}
+	request.ContentLength = int64(len(form))
+	request.GetBody = nil
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("User-Agent", "CodeRelay-Outlook/1.0.0-phase3")
@@ -174,35 +177,17 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	if len(body) > maxOAuthBodyBytes || !utf8.Valid(body) {
 		return nil, domain.ErrUpstreamSchemaChanged
 	}
-	payload, err := decodeOAuthObject(body)
-	if err != nil {
+	payload, decodeErr := decodeOAuthObject(body)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if decodeErr == nil {
+			defer clearOAuthFields(payload)
+		}
+		return nil, mapOAuthHTTPError(response.StatusCode, payload, response.Header.Get("Retry-After"), credential.RefreshToken)
+	}
+	if decodeErr != nil {
 		return nil, domain.ErrUpstreamSchemaChanged
 	}
 	defer clearOAuthFields(payload)
-	if response.StatusCode == http.StatusTooManyRequests {
-		err := domain.WithRetryAfter(domain.ErrSourceRateLimited, parseRetryAfterOutlook(response.Header.Get("Retry-After"), 5, time.Now().UTC()))
-		return nil, oauthErrorWithRotation(err, payload, credential.RefreshToken)
-	}
-	if response.StatusCode == http.StatusBadRequest {
-		errorCode := optionalString(payload, "error")
-		var mapped error
-		switch errorCode {
-		case "invalid_grant", "interaction_required", "consent_required", "login_required":
-			mapped = domain.ErrSourceReauthRequired
-		default:
-			mapped = domain.ErrSourceCredentials
-		}
-		return nil, oauthErrorWithRotation(mapped, payload, credential.RefreshToken)
-	}
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, oauthErrorWithRotation(domain.ErrSourceCredentials, payload, credential.RefreshToken)
-	}
-	if response.StatusCode >= 500 {
-		return nil, oauthErrorWithRotation(domain.ErrUpstreamFailure, payload, credential.RefreshToken)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, oauthErrorWithRotation(domain.ErrUpstreamFailure, payload, credential.RefreshToken)
-	}
 	accessToken, ok := requiredString(payload, "access_token", maxAccessTokenSize)
 	if !ok || !validAccessToken(accessToken) {
 		return nil, domain.ErrUpstreamSchemaChanged
@@ -298,6 +283,29 @@ func rawString(raw json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return value, true
+}
+
+func mapOAuthHTTPError(status int, fields map[string]json.RawMessage, retryAfter string, oldToken []byte) error {
+	var mapped error
+	switch {
+	case status == http.StatusTooManyRequests:
+		mapped = domain.WithRetryAfter(domain.ErrSourceRateLimited, parseRetryAfterOutlook(retryAfter, 5, time.Now().UTC()))
+	case status == http.StatusBadRequest:
+		switch optionalString(fields, "error") {
+		case "invalid_grant", "interaction_required", "consent_required", "login_required":
+			mapped = domain.ErrSourceReauthRequired
+		default:
+			mapped = domain.ErrSourceCredentials
+		}
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		mapped = domain.ErrSourceCredentials
+	default:
+		mapped = domain.ErrUpstreamFailure
+	}
+	if fields == nil {
+		return mapped
+	}
+	return oauthErrorWithRotation(mapped, fields, oldToken)
 }
 
 func optionalString(fields map[string]json.RawMessage, key string) string {
