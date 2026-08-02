@@ -12,14 +12,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PYTHONUNBUFFERED: "1"
-
 jobs:
-  go-phase4:
+  go-phase5:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +34,7 @@ jobs:
         run: |
           test -z "$(gofmt -l cmd internal)"
           go vet ./...
-      - name: Tests, race detector, and Phase 4 acceptance
+      - name: Tests, race detector, fuzz, and Phase 5 acceptance
         run: |
           go test -count=1 ./...
           go test -race -count=1 ./...
@@ -50,17 +46,20 @@ jobs:
           go test -run '^$' -fuzz FuzzExtractor -fuzztime=1s ./internal/extractor
           go test -run '^$' -fuzz FuzzResponseContracts -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzRetryAfter -fuzztime=1s ./internal/provider/flysms
+          go test -run '^$' -fuzz FuzzBoundedTokenBucket -fuzztime=1s ./internal/ratelimit
           go test -v -count=1 -run 'TestTwentyConcurrent(TOTPRequestsAreIsolatedAndFast|CredentialsDoNotCross)' ./internal/api ./internal/provider/flysms
+          go test -v -count=1 -run 'Test(TwentyActiveFourQueuedAndTwentyFifthBusy|QueuedRequestWaitsForConfiguredTwoSeconds|QueuedRequestsArePromotedFIFOWithoutNewArrivalBypass)' ./internal/admission
       - name: Staticcheck and reachable vulnerability scan
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
           staticcheck ./...
           go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
           govulncheck ./...
-      - name: Static Go Phase 4 build
+      - name: Static Go Phase 5 build
         run: |
-          CGO_ENABLED=0 go build -trimpath -tags netgo,osusergo -o /tmp/coderelay-go ./cmd/coderelay
-          /tmp/coderelay-go --version
+          CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags netgo,osusergo -o /tmp/coderelay ./cmd/coderelay
+          /tmp/coderelay --version
+          file /tmp/coderelay | grep -q 'statically linked'
 
   phase0-go-prototype:
     runs-on: ubuntu-22.04
@@ -97,59 +96,48 @@ jobs:
       - name: Static prototype build
         run: CGO_ENABLED=0 go build -trimpath -o /tmp/coderelay-outlook-phase0 ./cmd/outlook-phase0
 
-  test:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13"]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: requirements.lock
-      - name: Install locked dependencies
-        run: |
-          python -m pip install -r requirements.lock
-          python -m pip install --no-deps .
-      - name: Static checks
-        run: |
-          ruff check coderelay tests scripts/export-extractor-golden.py binary_entry.py
-          python -m compileall -q coderelay tests scripts/export-extractor-golden.py binary_entry.py
-          python scripts/export-extractor-golden.py --check
-          python -m pip check
-      - name: Tests
-        run: pytest -q
-
-  binary:
-    needs: test
+  phase5-artifact:
+    needs: go-phase5
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+      CODERELAY_PROFILE_TIME: 2s
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-go@v6
         with:
-          python-version: "3.13"
-          cache: pip
-          cache-dependency-path: requirements.lock
-      - name: Install locked dependencies
+          go-version: "1.26.5"
+          cache-dependency-path: go.sum
+      - name: Build static artifact
         run: |
-          python -m pip install -r requirements.lock
-          python -m pip install --no-deps .
-      - name: Build and smoke-test executable
+          ./scripts/build.sh
+          file dist/coderelay | grep -q 'statically linked'
+          go version -m dist/coderelay
+      - name: Single-core resource and log-scan smoke
         run: |
-          python -m PyInstaller --clean --noconfirm coderelay.spec
-          ./dist/coderelay --version
-          (cd dist && sha256sum coderelay > coderelay.sha256)
-          (cd dist && sha256sum -c coderelay.sha256)
+          go run ./cmd/phase5-soak \
+            -binary dist/coderelay \
+            -duration 12s \
+            -sample-every 50ms \
+            -output dist/phase5-smoke.json
+      - name: Synthetic pprof capture
+        run: |
+          CODERELAY_PROFILE_DIR=dist/pprof ./scripts/profile-phase5.sh
+      - name: CycloneDX SBOM
+        run: ./scripts/generate-sbom.sh
       - uses: actions/upload-artifact@v7
         with:
-          name: coderelay-linux-x86_64-glibc235
+          name: coderelay-go-phase5-linux-amd64
           path: |
             dist/coderelay
             dist/coderelay.sha256
+            dist/coderelay.cdx.json
+            dist/coderelay.cdx.json.sha256
+            dist/phase5-smoke.json
+            dist/pprof/cpu.prof
+            dist/pprof/heap.prof
+            dist/pprof/cpu-top.txt
+            dist/pprof/heap-top.txt
           if-no-files-found: error
           retention-days: 7

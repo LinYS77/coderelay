@@ -52,7 +52,7 @@ type goldenExpected struct {
 	Error *string `json:"error"`
 }
 
-func TestGoExtractorMatchesPythonGolden(t *testing.T) {
+func TestExtractorGoldenContract(t *testing.T) {
 	raw, err := os.ReadFile("../../testdata/extractor_golden.json")
 	if err != nil {
 		t.Fatal(err)

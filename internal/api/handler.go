@@ -170,6 +170,9 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 	switch admissionResult {
 	case admission.Acquired:
 		defer release()
+		if request.Context().Err() != nil {
+			return
+		}
 	case admission.Canceled:
 		return
 	default:
@@ -216,7 +219,16 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 				wrapped.Destroy()
 			}
 		}()
-		if request.Context().Err() != nil || errors.Is(err, context.Canceled) {
+		if request.Context().Err() != nil {
+			return
+		}
+		if errors.Is(err, context.Canceled) {
+			if !h.ready.Load() {
+				retry := int(math.Ceil(h.config.Server.AdmissionWait().Seconds()))
+				writePublicErrorWithUpdate(writer, id, serverBusy(retry), update)
+			} else {
+				writePublicErrorWithUpdate(writer, id, upstreamFailure(), update)
+			}
 			return
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, domain.ErrUpstreamTimeout) {

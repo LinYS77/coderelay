@@ -35,7 +35,7 @@ func TestHealthAndReadinessArePublic(t *testing.T) {
 	defer cancel()
 
 	live := perform(handler, http.MethodGet, "/health/live", nil, "")
-	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase4"`) {
+	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase5"`) {
 		t.Fatalf("live: status=%d body=%s", live.Code, live.Body.String())
 	}
 	ready := perform(handler, http.MethodGet, "/health/ready", nil, "")
@@ -71,6 +71,21 @@ func TestRequestIDValidation(t *testing.T) {
 	handler.ServeHTTP(invalidResponse, invalid)
 	if got := invalidResponse.Header().Get("X-Request-ID"); got == "bad" || len(got) != 24 {
 		t.Fatalf("invalid request ID replacement = %q", got)
+	}
+}
+
+func TestCanceledRequestIsNeverAdmittedOrRead(t *testing.T) {
+	handler, token, cancelHandler := newTestHandler(t, totp.New(), nil)
+	defer cancelHandler()
+	body := newCountingBody([]byte(`{"type":"totp","credential":"must-remain-unread"}`))
+	request := newAPIRequest(body, "Bearer "+string(token))
+	ctx, cancelRequest := context.WithCancel(request.Context())
+	cancelRequest()
+	request = request.WithContext(ctx)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if body.reads.Load() != 0 || handler.ActiveRequests() != 0 || handler.QueuedRequests() != 0 {
+		t.Fatalf("reads=%d active=%d queued=%d", body.reads.Load(), handler.ActiveRequests(), handler.QueuedRequests())
 	}
 }
 
@@ -348,6 +363,31 @@ func TestAuthenticatedRequestsArePrincipalRateLimitedAcrossIPs(t *testing.T) {
 	}
 }
 
+func TestSharedPrincipalHasBurst40AcrossClientIPs(t *testing.T) {
+	fixed := time.Unix(1_111_111_111, 0)
+	handler, token, cancel := newTestHandler(t, totp.NewWithClock(func() time.Time { return fixed }), nil)
+	defer cancel()
+	payload := []byte(`{"type":"totp","credential":"` + testTOTPSecret + `","min_ttl":0}`)
+	for index := 0; index < 41; index++ {
+		body := newCountingBody(payload)
+		request := newAPIRequest(body, "Bearer "+string(token))
+		request.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", index+1)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if index < 40 && response.Code != http.StatusOK {
+			t.Fatalf("burst request %d status=%d body=%s", index+1, response.Code, response.Body.String())
+		}
+		if index == 40 {
+			if response.Code != http.StatusTooManyRequests || errorCode(t, response) != "RATE_LIMITED" {
+				t.Fatalf("request 41 status=%d body=%s", response.Code, response.Body.String())
+			}
+			if body.reads.Load() != 0 {
+				t.Fatal("principal-limited request body was read")
+			}
+		}
+	}
+}
+
 func TestAdmissionRejectsTwentyFifthWithoutReadingBody(t *testing.T) {
 	resolver := newBlockingResolver()
 	handler, token, cancel := newTestHandler(t, resolver, nil)
@@ -398,8 +438,54 @@ func TestAdmissionRejectsTwentyFifthWithoutReadingBody(t *testing.T) {
 	if elapsed >= 100*time.Millisecond {
 		t.Fatalf("25th rejection took %s", elapsed)
 	}
+	t.Logf("25th rejection latency: %s", elapsed)
 	resolver.releaseAll()
 	wait.Wait()
+	if handler.ActiveRequests() != 0 || handler.QueuedRequests() != 0 {
+		t.Fatalf("active=%d queued=%d", handler.ActiveRequests(), handler.QueuedRequests())
+	}
+}
+
+func TestQueuedTimeoutRejectsBeforeCredentialBodyRead(t *testing.T) {
+	resolver := newBlockingResolver()
+	defer resolver.releaseAll()
+	mutate := func(cfg *config.Config) {
+		cfg.Server.MaxConcurrentCodeRequests = 1
+		cfg.Server.MaxQueuedCodeRequests = 1
+		cfg.Server.AdmissionWaitSeconds = 0.05
+	}
+	handler, token, cancel := newTestHandler(t, resolver, mutate)
+	defer cancel()
+
+	activeDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		activeDone <- perform(handler, http.MethodPost, "/api/v1/code", []byte(`{"type":"totp","credential":"`+testTOTPSecret+`","min_ttl":0}`), string(token))
+	}()
+	resolver.waitEntered(t, 1)
+
+	queuedBody := newCountingBody([]byte(`{"type":"totp","credential":"must-remain-unread"}`))
+	queuedRequest := newAPIRequest(queuedBody, "Bearer "+string(token))
+	queuedResponse := httptest.NewRecorder()
+	started := time.Now()
+	handler.ServeHTTP(queuedResponse, queuedRequest)
+	elapsed := time.Since(started)
+	if queuedResponse.Code != http.StatusServiceUnavailable || errorCode(t, queuedResponse) != "SERVER_BUSY" {
+		t.Fatalf("status=%d body=%s", queuedResponse.Code, queuedResponse.Body.String())
+	}
+	if elapsed < 40*time.Millisecond || elapsed > 300*time.Millisecond {
+		t.Fatalf("queue timeout=%s, want approximately 50ms", elapsed)
+	}
+	if queuedBody.reads.Load() != 0 {
+		t.Fatalf("timed-out queued credential body reads=%d", queuedBody.reads.Load())
+	}
+	if queuedResponse.Header().Get("Connection") != "close" {
+		t.Fatal("pre-body rejection did not close the connection")
+	}
+
+	resolver.releaseAll()
+	if response := <-activeDone; response.Code != http.StatusOK {
+		t.Fatalf("active status=%d body=%s", response.Code, response.Body.String())
+	}
 	if handler.ActiveRequests() != 0 || handler.QueuedRequests() != 0 {
 		t.Fatalf("active=%d queued=%d", handler.ActiveRequests(), handler.QueuedRequests())
 	}
@@ -475,6 +561,28 @@ func TestInvalidResolverCodeReturnsInternalError(t *testing.T) {
 	}
 }
 
+func TestResolverCancellationNeverBecomesEmptyHTTP200(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		ready  bool
+		status int
+		code   string
+	}{
+		{name: "unexpected provider cancellation", ready: true, status: http.StatusBadGateway, code: "UPSTREAM_FAILURE"},
+		{name: "shutdown cancellation", ready: false, status: http.StatusServiceUnavailable, code: "SERVER_BUSY"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler, token, cancel := newTestHandler(t, errorResolver{cause: context.Canceled}, nil)
+			defer cancel()
+			handler.ready.Store(test.ready)
+			response := perform(handler, http.MethodPost, "/api/v1/code", []byte(`{"type":"totp","credential":"`+testTOTPSecret+`","min_ttl":0}`), string(token))
+			if response.Code != test.status || errorCode(t, response) != test.code {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestResolverDeadlineUsesPublicTimeout(t *testing.T) {
 	handler, token, cancel := newTestHandler(t, errorResolver{cause: context.DeadlineExceeded}, nil)
 	defer cancel()
@@ -521,7 +629,7 @@ func TestPanicRecoveryRedactsValueAndReleasesAdmission(t *testing.T) {
 func TestOldAndUIRoutesRemainJSON404(t *testing.T) {
 	handler, token, cancel := newTestHandler(t, totp.New(), nil)
 	defer cancel()
-	for _, path := range []string{"/", "/login", "/docs", "/openapi.json", "/api/v1/sources", "/api/v1/codes/old"} {
+	for _, path := range []string{"/", "/login", "/docs", "/openapi.json", "/debug/pprof/", "/metrics", "/api/v1/sources", "/api/v1/codes/old"} {
 		response := perform(handler, http.MethodGet, path, nil, string(token))
 		if response.Code != http.StatusNotFound || response.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 			t.Fatalf("path=%s status=%d type=%s", path, response.Code, response.Header().Get("Content-Type"))
@@ -643,7 +751,7 @@ func (r *blockingResolver) releaseAll() {
 	r.once.Do(func() { close(r.release) })
 }
 
-func newTestHandler(t *testing.T, resolverInput any, mutate func(*config.Config)) (*Handler, []byte, context.CancelFunc) {
+func newTestHandler(t testing.TB, resolverInput any, mutate func(*config.Config)) (*Handler, []byte, context.CancelFunc) {
 	t.Helper()
 	var resolver Resolver
 	switch value := resolverInput.(type) {

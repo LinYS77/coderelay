@@ -1,5 +1,5 @@
-// Package extractor finds fresh six-digit verification codes with behavior
-// shared by the Python 0.3 and Go implementations.
+// Package extractor finds fresh six-digit verification codes according to the
+// frozen language-neutral golden contract.
 package extractor
 
 import (
@@ -460,11 +460,11 @@ func stripURLs(value string) string {
 	output.Grow(len(value))
 	for position := 0; position < len(runes); {
 		matched := 0
-		if (position == 0 || !pythonWord(runes[position-1])) && asciiRunesHavePrefixFold(runes[position:], "https://") {
+		if (position == 0 || !regexWord(runes[position-1])) && asciiRunesHavePrefixFold(runes[position:], "https://") {
 			matched = len([]rune("https://"))
-		} else if (position == 0 || !pythonWord(runes[position-1])) && asciiRunesHavePrefixFold(runes[position:], "http://") {
+		} else if (position == 0 || !regexWord(runes[position-1])) && asciiRunesHavePrefixFold(runes[position:], "http://") {
 			matched = len([]rune("http://"))
-		} else if (position == 0 || !pythonWord(runes[position-1])) && asciiRunesHavePrefixFold(runes[position:], "www.") {
+		} else if (position == 0 || !regexWord(runes[position-1])) && asciiRunesHavePrefixFold(runes[position:], "www.") {
 			matched = len([]rune("www."))
 		}
 		if matched == 0 {
@@ -578,7 +578,7 @@ func asciiWord(value byte) bool {
 	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
 }
 
-func pythonWord(value rune) bool {
+func regexWord(value rune) bool {
 	return value == '_' || unicode.IsLetter(value) || unicode.IsNumber(value)
 }
 

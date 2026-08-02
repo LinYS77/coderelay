@@ -1,4 +1,4 @@
-// Package config loads and validates the Phase 3 Go service configuration.
+// Package config loads and validates the Go service configuration.
 package config
 
 import (
@@ -270,7 +270,7 @@ func (c Config) Validate() error {
 		c.Server.AllowedHosts[i] = normalized
 	}
 	if len(c.Server.CORSOrigins) != 0 {
-		return invalid("CORS must remain disabled in Phase 2")
+		return invalid("CORS must remain disabled")
 	}
 	if c.Server.AccessLog {
 		return invalid("access_log must remain false")

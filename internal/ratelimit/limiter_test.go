@@ -1,11 +1,69 @@
 package ratelimit
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestSharedKeyPolicyIs240PerMinuteWithBurst40(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	limiter := New(240, 40, 100)
+	limiter.now = func() time.Time { return now }
+	for request := 1; request <= 40; request++ {
+		if decision := limiter.Allow("shared-key"); !decision.Allowed {
+			t.Fatalf("burst request %d rejected: %+v", request, decision)
+		}
+	}
+	if decision := limiter.Allow("shared-key"); decision.Allowed || decision.RetryAfterSeconds != 1 {
+		t.Fatalf("request after burst = %+v", decision)
+	}
+	now = now.Add(250 * time.Millisecond)
+	if decision := limiter.Allow("shared-key"); !decision.Allowed {
+		t.Fatalf("four-per-second refill rejected: %+v", decision)
+	}
+	if decision := limiter.Allow("shared-key"); decision.Allowed {
+		t.Fatalf("refill produced more than one token: %+v", decision)
+	}
+	now = now.Add(30 * time.Second)
+	for request := 1; request <= 40; request++ {
+		if decision := limiter.Allow("shared-key"); !decision.Allowed {
+			t.Fatalf("capped refill request %d rejected: %+v", request, decision)
+		}
+	}
+	if limiter.Allow("shared-key").Allowed {
+		t.Fatal("refill exceeded burst 40")
+	}
+}
+
+func TestConcurrentDistinctKeysNeverExceedStateBound(t *testing.T) {
+	const maximum = 128
+	limiter := New(240, 40, maximum)
+	fixed := time.Unix(1_000, 0)
+	limiter.now = func() time.Time { return fixed }
+	var allowed atomic.Int64
+	var exhausted atomic.Int64
+	var wait sync.WaitGroup
+	for index := 0; index < maximum*4; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			decision := limiter.Allow(fmt.Sprintf("key-%d", index))
+			if decision.Allowed {
+				allowed.Add(1)
+			}
+			if decision.CapacityExhausted {
+				exhausted.Add(1)
+			}
+		}()
+	}
+	wait.Wait()
+	if limiter.EntryCount() != maximum || allowed.Load() != maximum || exhausted.Load() != maximum*3 {
+		t.Fatalf("entries=%d allowed=%d exhausted=%d", limiter.EntryCount(), allowed.Load(), exhausted.Load())
+	}
+}
 
 func TestTokenBucketRefillAndRetry(t *testing.T) {
 	now := time.Unix(1_000, 0)

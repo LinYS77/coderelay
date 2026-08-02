@@ -1,19 +1,18 @@
 # Extractor golden fixtures
 
-`extractor_golden.json` is the language-neutral contract shared by Python 0.3 and Go.
+`extractor_golden.json` is the frozen, language-neutral extractor contract used by the Go implementation.
 
 Each case contains:
 
-- extractor settings or a named settings profile;
+- a settings profile;
 - `now` and optional `not_before` timestamps;
-- bounded provider-neutral messages, including UID ordering metadata;
-- the expected six-digit ASCII code, no-match result, or `AMBIGUOUS_CODE`.
+- messages with provider sequence/UID metadata;
+- the expected six-digit ASCII code or public error code.
 
-Python is the export oracle. Regenerate or verify the expected outcomes with:
+The 48 expected outcomes were frozen after the Phase 4 differential gate reached zero mismatches. The retired implementation and exporter are intentionally not retained; any contract change now requires an explicit fixture review plus the Go golden, unit, race, and fuzz gates.
+
+Run:
 
 ```bash
-python scripts/export-extractor-golden.py
-python scripts/export-extractor-golden.py --check
+go test -count=1 ./internal/extractor
 ```
-
-Both `tests/test_extractor_golden.py` and `internal/extractor/golden_test.go` consume this exact JSON file. Real credentials, mailbox contents, and verification codes from live accounts must never be added here.

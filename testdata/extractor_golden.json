@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "oracle": "CodeRelay Python 0.3 canonical extractor",
+  "oracle": "CodeRelay 0.3 frozen canonical extractor",
   "settings_profiles": {
     "default": {
       "senders": [],
@@ -205,7 +205,7 @@
       }
     },
     {
-      "name": "python_unicode_word_boundary_before_url",
+      "name": "unicode_word_boundary_before_url",
       "settings": "default",
       "now": "2026-08-03T12:00:00Z",
       "not_before": null,

@@ -1,6 +1,6 @@
 # Outlook Go Phase 0 风险原型
 
-> **PROTOTYPE / THROWAWAY**：这里不是 CodeRelay Go 生产实现，不会被 Python 服务导入或运行。
+> **PROTOTYPE / THROWAWAY**：这里不是 CodeRelay Go 正式实现，也不会被正式服务导入或运行。
 >
 > **结论：PASS（2026-08-02）**。本地受控门禁和真实 Outlook 门禁均已通过；详细证据见 [`RESULTS.md`](RESULTS.md)。
 

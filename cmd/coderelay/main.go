@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/LinYS77/coderelay/internal/api"
@@ -83,12 +85,56 @@ func runServe(arguments []string) error {
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	stopSnapshots := startRuntimeSnapshots(signalCtx, logger)
+	defer stopSnapshots()
 	go func() {
 		<-signalCtx.Done()
 		outlookProvider.Close()
 		flyProvider.Close()
 	}()
 	return service.Serve(signalCtx, cfg, handler, logger)
+}
+
+func startRuntimeSnapshots(ctx context.Context, logger *slog.Logger) func() {
+	signals := make(chan os.Signal, 1)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	signal.Notify(signals, syscall.SIGUSR1)
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-signals:
+				logRuntimeSnapshot(logger)
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(signals)
+			close(stop)
+			<-done
+		})
+	}
+}
+
+func logRuntimeSnapshot(logger *slog.Logger) {
+	if logger == nil {
+		return
+	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
+	logger.Info(
+		"runtime_snapshot",
+		"goroutines", runtime.NumGoroutine(),
+		"heap_bytes", memory.HeapAlloc,
+		"heap_sys_bytes", memory.HeapSys,
+	)
 }
 
 func runValidate(arguments []string) error {
@@ -109,7 +155,7 @@ func runValidate(arguments []string) error {
 	}
 	fmt.Fprintf(os.Stdout, "Configuration is valid: %s\n", cfg.ConfigPath)
 	fmt.Fprintln(os.Stdout, "- mode: stateless")
-	fmt.Fprintln(os.Stdout, "- phase: 3 (totp, flysms, outlook)")
+	fmt.Fprintln(os.Stdout, "- phase: 5 (totp, flysms, outlook)")
 	return nil
 }
 
@@ -145,7 +191,7 @@ func defaultConfigPath() string {
 	if value := os.Getenv("CODERELAY_CONFIG"); value != "" {
 		return value
 	}
-	return "config.go.toml"
+	return "config.toml"
 }
 
 func newLogger(level string) *slog.Logger {

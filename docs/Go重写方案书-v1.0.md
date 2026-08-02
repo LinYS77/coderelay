@@ -458,8 +458,10 @@ testdata/
   mime/
   contracts/
 scripts/
-  build-go.sh
-  loadtest.sh
+  build.sh
+  generate-sbom.sh
+  profile-phase5.sh
+cmd/phase5-soak/
 ```
 
 关键接口只暴露 domain 类型：
@@ -1748,7 +1750,7 @@ loadtest-1cpu
 
 ## 24. 部署配置建议
 
-Go配置优先保留Python 0.3现有字段名，新增字段使用同一命名风格：
+Go 配置使用单一、严格的 `config.toml` 格式：
 
 ```toml
 [server]
@@ -1788,7 +1790,6 @@ token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 imap_host = "outlook.office365.com"
 imap_port = 993
 imap_timeout_seconds = 15.0
-fetch_timeout_seconds = 30.0
 poll_interval_seconds = 2.0
 max_messages = 10
 max_message_bytes = 262144
@@ -1826,7 +1827,7 @@ systemd：
 User=coderelay
 Group=coderelay
 UMask=0077
-ExecStart=/usr/local/bin/coderelay serve --config /etc/coderelay/config.go.toml
+ExecStart=/usr/local/bin/coderelay serve --config /etc/coderelay/config.toml
 Environment=GOMAXPROCS=1
 Environment=GOMEMLIMIT=768MiB
 Restart=on-failure
@@ -1875,17 +1876,16 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 Caddy访问日志不得包含Authorization、request/response body或query token；默认不会记录body，但必须审查自定义log format。防火墙只开放443，8787只监听loopback。Go服务100秒write timeout、Caddy 105秒header timeout、调用方90秒整体timeout形成由内到外递增的明确边界。
 
-### 24.2 配置与回滚文件
+### 24.2 单一配置与制品回滚
 
-Go新增字段会被Python的`extra=forbid`拒绝，所以不能虚假宣称同一文件可无损双用。部署时保留：
+仓库和部署只保留 Go 服务配置：
 
 ```text
-/etc/coderelay/config.python.toml
-/etc/coderelay/config.go.toml
+/etc/coderelay/config.toml
 /etc/coderelay/secrets/api-shared.sha256
 ```
 
-两种实现共享同一个Token hash文件和API契约，但各自使用已验证配置。切换/回滚时必须先运行目标二进制的`validate-config`。
+每次发布必须先运行目标二进制的 `validate-config`。回滚使用前一个已校验的 Go 静态制品、checksum 和 SBOM，不再维护第二套服务实现或第二种配置格式。
 
 ---
 
@@ -1950,16 +1950,16 @@ context cancel/conn deadline
 - ambiguity；
 - not_before。
 
-### Phase 5：并发与安全收口
+### Phase 5：并发、安全与 Go-only 收口
 
-- 20+4 admission；
-- one-key 240/min；
-- race/fuzz；
-- pprof；
-- 1CPU load/soak；
-- credential log scans；
+- 公平 FIFO `20 active + 4 queued` admission 和 2 秒 queue wait；
+- one-key/IP 240/min、burst 40 和有界 limiter 状态；
+- pre-body admission、race/fuzz 和 cancel/shutdown；
+- test-only pprof，不开放 HTTP pprof；
+- 1CPU load/60-minute soak、credential log scan、goroutine/FD/RSS gate；
 - 更新API调用指南：共享Key、`SERVER_BUSY`、90秒timeout；
-- static binary。
+- CGO=0 static binary、checksum、CycloneDX SBOM、govulncheck；
+- Phase 5 全部门禁通过后删除旧服务源代码、依赖、测试、配置和构建路径，仓库只保留 Go。
 
 ### Phase 6：真实验收
 
@@ -1970,28 +1970,26 @@ context cancel/conn deadline
 - 从两个实际调用项目主机测试；
 - 真实测试结束后轮换所有在聊天、终端或人工验收中暴露过的上游credential。
 
-### Phase 7：切换与回滚
+### Phase 7：切换与制品回滚
 
-保持同一域名/API，切换 systemd binary。payload契约不变，但两个调用项目上线前必须把整体timeout从当前75秒调整为90秒，并新增`SERVER_BUSY`有限退避处理。
+保持同一域名/API，切换 systemd binary。payload 契约不变，两个调用项目上线前必须使用 90 秒整体 timeout，并新增 `SERVER_BUSY` 有限抖动退避。
 
 ```text
-coderelay-python 0.3.0 保留为 rollback
-coderelay-go 1.0.0 先运行在备用端口
-Caddy canary切少量请求
+新 Go 制品先运行在备用 loopback 端口
+Caddy canary 切少量请求
 完成验收后切全部
+失败时回滚到前一个已签名/校验的 Go 静态制品
 ```
 
-禁止把同一个Outlook/FlySMS请求同时镜像到Python和Go：重复OAuth刷新会放大token轮换竞争，重复上游读取也不能提供可靠差分。TOTP可以shadow；邮件Provider使用合成fixture、独立测试credential或一次只路由到一个实现。
+禁止把同一个 Outlook/FlySMS 请求同时镜像到两个实例：重复 OAuth 刷新会放大 token rotation 竞争，重复上游读取也不能提供可靠差分。邮件 Provider 使用合成 fixture、独立测试 credential 或一次只路由到一个实例。
 
-切换前为当前提交创建`python-v0.3.0` tag和可校验binary。Go收到的最新refresh token由调用方保存，因此回滚后的Python会在下一请求收到最新四段式credential，无服务端状态迁移。
-
-Go 配置保留当前稳定字段名，但新增安全/并发字段使文件不能直接交给Python；回滚使用第24.2节的独立已验证配置。不得在 Go 验收前删除 Python tag、binary、文档和测试基线。
+回滚包必须包含前一个 Go binary、SHA-256、CycloneDX SBOM、严格配置和 systemd/Caddy 操作记录；rotation 始终由调用方保存，因此静态制品回滚不需要服务端状态迁移。
 
 ---
 
 ## 26. 发布门禁（Definition of Done）
 
-Go 1.0.0 只有全部满足才可替代 Python：
+Go 1.0.0 只有全部满足才可进入真实部署切换：
 
 - [ ] API 请求/响应兼容；
 - [ ] 同一 CodeRelay Key 20并发；
@@ -2004,7 +2002,7 @@ Go 1.0.0 只有全部满足才可替代 Python：
 - [ ] Outlook batch FETCH通过；
 - [ ] Outlook token rotation在成功和错误响应均通过；
 - [x] FlySMS真实邮件读取通过；
-- [x] Python extractor golden parity通过；
+- [x] frozen extractor golden contract通过；
 - [ ] `go test -race ./...`通过；
 - [ ] fuzz smoke通过；
 - [ ] 60分钟单核soak通过；
@@ -2037,7 +2035,7 @@ Go 1.0.0 只有全部满足才可替代 Python：
 | 单核CPU峰值 | 连接池、批量FETCH、bounded parse、pprof |
 | 超载时credential堆积 | admission在body decode之前，pre-body拒绝不drain并关闭连接 |
 | token轮换响应写失败 | 不持久化补偿；调用方CAS更新并避免同credential并发刷新 |
-| Python/Go配置分歧 | 保留两份已验证配置，切换前validate-config |
+| 配置或制品回滚漂移 | 单一严格配置；保留前一个Go binary/checksum/SBOM并演练 |
 | Unicode/regex语义变化 | x/text casefold、ASCII code决策、golden差分测试 |
 | Caddy意外重放POST | 单upstream、无retry配置、故障注入确认 |
 

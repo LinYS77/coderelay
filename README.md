@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/LinYS77/coderelay/actions/workflows/ci.yml/badge.svg)](https://github.com/LinYS77/coderelay/actions/workflows/ci.yml)
 
-CodeRelay 是一个单用户、API-only、无状态的验证码解析服务。调用项目在每次请求中提交本次上游凭据，CodeRelay 临时完成取码并返回 JSON，不在服务器持久化 TOTP、Outlook 或 FlySMS 凭据。
+CodeRelay 是一个 Go 实现的单用户、API-only、无状态验证码解析服务。调用项目在每次请求中提交本次上游凭据；CodeRelay 临时完成取码并返回 JSON，不持久化或跨请求缓存 TOTP、Outlook、FlySMS 凭据、邮件或验证码。
+
+仓库只保留 Go 服务、Go 测试和语言无关 golden fixtures；旧服务实现、依赖、构建脚本和测试已移除。
 
 支持：
 
@@ -16,63 +18,53 @@ CodeRelay 是一个单用户、API-only、无状态的验证码解析服务。�
 https://2fa.077.li
 ```
 
-完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)。
-
-面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)，实施状态见 [`docs/Go重写进度.md`](docs/Go重写进度.md)。Phase 0、Phase 1、Phase 2 和 Phase 4 extractor parity 均已通过；Phase 3 正式 Provider 已通过真实 OAuth/IMAP 与错误响应轮换门禁，但新鲜码、未读状态对照和资源 soak 尚未完成，因此生产实现仍为 Python 0.3.0。
-
-Go Phase 4 本地验证与构建：
-
-```bash
-GOTOOLCHAIN=go1.26.5 go test -race ./...
-PYTHON=python3 ./scripts/verify-extractor-parity.sh
-./scripts/build-go.sh
-cp config.go.example.toml config.go.toml
-./dist/coderelay-go generate-api-token --hash-file secrets/api.sha256
-./dist/coderelay-go validate-config --config config.go.toml
-```
-
-Go 使用独立的 [`config.go.example.toml`](config.go.example.toml)，不能把新增字段直接交给 Python 0.3。
+完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)，设计与验收状态见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md) 和 [`docs/Go重写进度.md`](docs/Go重写进度.md)。
 
 ## 核心边界
 
 ```text
-有 CodeRelay Bearer Token 的调用项目
-        │ POST /api/v1/code（请求体携带本次上游凭据）
-        ▼
-CodeRelay
-        ├─ TOTP：本地计算
-        ├─ Outlook：OAuth refresh + readonly IMAP + BODY.PEEK
-        └─ FlySMS：固定 JSON API
-        │
-        ▼
+受控后端项目
+    │ POST /api/v1/code
+    │ Authorization: Bearer <CodeRelay API token>
+    │ JSON body: request-scoped upstream credential
+    ▼
+CodeRelay Go
+    ├─ TOTP：本地 RFC 6238
+    ├─ Outlook：OAuth refresh + readonly IMAP + BODY.PEEK
+    └─ FlySMS：固定 HTTPS JSON API
+    ▼
 {"code":"123456"}
 ```
 
 CodeRelay：
 
-- 不把调用方上游凭据写入配置、文件或数据库；
-- 不跨请求缓存上游凭据、access token、refresh token、邮件或验证码；
-- 不记录请求正文、验证码或上游 token；
-- 请求结束时主动释放应用层凭据引用；
-- Outlook 密码字段只为兼容输入格式，解析后立即丢弃；
-- Microsoft 返回轮换 refresh token 时，只通过 `credential_update` 返回给调用方，不在服务器保存；
-- 只允许固定的 Microsoft、Outlook IMAP 和 FlySMS 上游地址，调用方不能指定任意 URL。
+- 只监听显式 loopback 地址，公网入口必须由 Caddy 提供；
+- 不把请求级 credential 写入配置、文件、数据库、日志、URL 或跨请求缓存；
+- Outlook compatibility password 解析后立即丢弃；
+- OAuth access/refresh token 和 IMAP session 只属于当前请求；
+- Microsoft refresh-token rotation 只通过 `credential_update` 交给调用方；
+- Outlook 使用 readonly `INBOX` 和 partial `BODY.PEEK`；
+- Microsoft、Outlook IMAP 和 FlySMS 上游地址均为服务端固定策略；
+- 所有资源、正文、消息、MIME、连接、请求和 admission 状态都有硬上限。
 
-“无状态”不表示凭据从未进入内存：HTTPS 解密、JSON 解析和上游调用期间，凭据不可避免地短暂存在于进程内存。Python 也不能承诺物理内存清零；本项目保证的是不持久化、不记录、不跨请求保留。
+“无状态”不表示 credential 从未进入内存：HTTPS 解密、解析和上游调用期间它必然短暂存在。保证的是不持久化、不记录、不跨请求保留，并对应用层可控副本进行 best-effort 清理。
 
 ## API
-
-所有取码请求必须使用：
-
-```http
-Authorization: Bearer <CODERELAY_API_TOKEN>
-Content-Type: application/json
-```
 
 唯一取码端点：
 
 ```http
 POST /api/v1/code
+Authorization: Bearer <CODERELAY_API_TOKEN>
+Content-Type: application/json
+Accept: application/json
+```
+
+公开健康端点：
+
+```text
+GET /health/live
+GET /health/ready
 ```
 
 ### TOTP
@@ -91,7 +83,7 @@ POST /api/v1/code
 {
   "type": "outlook",
   "credential": "email----password----client_id----refresh_token",
-  "not_before": "2026-07-31T03:00:00Z",
+  "not_before": "2026-08-02T03:00:00Z",
   "wait_seconds": 30
 }
 ```
@@ -102,18 +94,12 @@ POST /api/v1/code
 {
   "type": "flysms",
   "credential": "email---token---https://flysms.xyz/icloud/pickup#email=...&key=...",
-  "not_before": "2026-07-31T03:00:00Z",
+  "not_before": "2026-08-02T03:00:00Z",
   "wait_seconds": 30
 }
 ```
 
-成功：
-
-```json
-{"code":"123456"}
-```
-
-如果 Outlook 刷新时发生 token 轮换：
+成功响应只包含 code 和可选 rotation：
 
 ```json
 {
@@ -124,38 +110,31 @@ POST /api/v1/code
 }
 ```
 
-调用方必须把新 refresh token 更新到自己的 secret manager。即使没有找到新验证码，错误 JSON 也可能携带 `credential_update`。
+错误响应也可能带 `credential_update`。调用方必须先原子持久化最新 rotation，再处理成功或错误；不得记录整个响应。
 
-`not_before` 建议在触发上游发送邮件之前记录，用于阻止旧验证码误匹配。
+## 并发、排队与限流
 
-旧版以下接口已删除：
-
-```text
-GET /api/v1/sources
-GET /api/v1/codes/{source_id}
-```
-
-## 服务鉴权
-
-CodeRelay 自身只保存调用项目 API Token 的 SHA-256 hash。建议每个消费项目一把独立 Token：
-
-```bash
-./coderelay generate-api-token \
-  --hash-file secrets/api-project-a.sha256
-```
-
-明文 Token 只显示一次，应放进消费项目的 secret manager。Token 只能通过 `Authorization` 请求头发送，不能放入 URL。
-
-以下健康端点公开，但不返回任何来源、邮箱或验证码信息：
+默认生产策略：
 
 ```text
-GET /health/live
-GET /health/ready
+active requests:             20
+bounded FIFO queue:           4
+queue wait:                   2s
+25th request:                 immediate 503 SERVER_BUSY
+shared key rate:             240/minute
+shared key burst:             40
+IP token bucket:             enabled
+principal/key token bucket:  enabled
+IP limiter state cap:        10,000
+principal state cap:          1,000
+inbound connection cap:        128
 ```
+
+认证、IP/key 限流和 admission 都发生在 credential body decode 之前。未通过 admission 的请求不读取或 drain body，并关闭该连接。
+
+调用方整体 timeout 至少使用 90 秒。`503 SERVER_BUSY` 只能做有限、带抖动的退避，禁止无限重试。
 
 ## 配置
-
-复制示例：
 
 ```bash
 install -m 600 config.example.toml config.toml
@@ -163,44 +142,25 @@ mkdir -p secrets
 chmod 700 secrets
 ```
 
-最小配置：
-
-```toml
-[server]
-host = "127.0.0.1"
-port = 8787
-allowed_hosts = ["2fa.077.li", "localhost", "127.0.0.1"]
-forwarded_allow_ips = "127.0.0.1"
-access_log = false
-
-[security]
-api_token_hash_files = ["secrets/api-project-a.sha256"]
-strict_secret_permissions = true
-api_rate_limit_per_minute = 60
-```
-
-配置中没有 TOTP、Outlook 或 FlySMS 凭据。
-
-校验：
+签发 API token：
 
 ```bash
-./coderelay validate-config --config config.toml
+./dist/coderelay generate-api-token \
+  --hash-file secrets/api-project-a.sha256
 ```
 
-## 构建单文件程序
+明文 token 只显示一次，应立即导入调用项目 secret manager。CodeRelay 配置只保存 mode-0600 SHA-256 hash 文件路径。
+
+校验配置：
 
 ```bash
-./scripts/build-binary.sh
-./dist/coderelay --version
-(cd dist && sha256sum -c coderelay.sha256)
+./dist/coderelay validate-config --config config.toml
 ```
 
-PyInstaller 不是跨平台编译器。应在与目标 VPS 相同 CPU 架构、且 glibc 不高于目标 VPS 的 Linux 环境构建。
-
-## 启动
+启动：
 
 ```bash
-./coderelay serve --config config.toml
+./dist/coderelay serve --config config.toml
 ```
 
 默认只监听：
@@ -209,7 +169,75 @@ PyInstaller 不是跨平台编译器。应在与目标 VPS 相同 CPU 架构、�
 127.0.0.1:8787
 ```
 
-公网只能通过现有 Caddy 的 HTTPS 入口访问，不能直接开放 8787。
+## 构建与供应链
+
+支持 Go `1.25.12` 和 `1.26.5`，默认构建工具链为 `go1.26.5`。
+
+```bash
+./scripts/build.sh
+./dist/coderelay --version
+sha256sum -c dist/coderelay.sha256
+file dist/coderelay
+```
+
+构建产物为 `CGO_ENABLED=0`、linux/amd64、trimpath、stripped 静态二进制。
+
+生成 CycloneDX 1.6 SBOM：
+
+```bash
+./scripts/generate-sbom.sh
+sha256sum -c dist/coderelay.cdx.json.sha256
+```
+
+SBOM 使用固定 `cyclonedx-gomod v1.10.0` 从最终二进制生成。
+
+## Phase 5 验证
+
+常规门禁：
+
+```bash
+GOTOOLCHAIN=go1.26.5 go test ./... -count=1
+GOTOOLCHAIN=go1.26.5 go test -race ./... -count=1
+go vet ./...
+staticcheck ./...
+govulncheck ./...
+```
+
+单核 CPU/heap pprof：
+
+```bash
+CODERELAY_PROFILE_TIME=10s ./scripts/profile-phase5.sh
+```
+
+credential-safe 60 分钟单核 soak：
+
+```bash
+./scripts/build.sh
+go run ./cmd/phase5-soak \
+  -binary dist/coderelay \
+  -duration 60m \
+  -output /tmp/coderelay-phase5-soak.json
+```
+
+soak 使用随机 CodeRelay API token 和确定性的合成 TOTP credentials，不使用真实上游 credential。它验证：
+
+- 20-request paced bursts 和共享 key 240/minute 策略；
+- HTTP 200、credential/result isolation 和 internal 500；
+- `/proc` FD/socket/thread/RSS 基线、峰值及回落；
+- SIGUSR1 runtime goroutine snapshot 前后差值；
+- 合成 token、credential 和返回 code 的结构化日志扫描；
+- SIGTERM graceful shutdown 和 clean exit；
+- steady RSS `<256 MiB`、stress peak RSS `<512 MiB`。
+
+## 本地 runtime snapshot
+
+服务进程收到 `SIGUSR1` 时，只写一条不含请求或 credential 的结构化事件：
+
+```text
+runtime_snapshot: goroutines, heap_bytes, heap_sys_bytes
+```
+
+它用于本机 soak 的前后泄漏对照。CodeRelay 不开放 HTTP pprof、debug、metrics 或管理端点；CPU/heap pprof 仅由合成测试进程离线生成。
 
 ## CLI
 
@@ -220,76 +248,20 @@ coderelay generate-api-token
 coderelay --version
 ```
 
-旧版持久化相关命令已经删除：
-
-```text
-outlook-import
-hash-password
-generate-key
-```
-
 ## 安全调用示例
 
 ```bash
 secret-manager-render-coderelay-json | curl --fail-with-body \
   --connect-timeout 5 \
-  --max-time 75 \
+  --max-time 90 \
   -H "Authorization: Bearer ${CODERELAY_API_TOKEN}" \
   -H "Content-Type: application/json" \
   --data-binary @- \
   https://2fa.077.li/api/v1/code
 ```
 
-不要在命令行参数中内联真实 credential，也不要为了调用创建明文 `request.json`；应从消费项目内存或 secret manager 直接构造请求体。
+不得在命令行参数中内联真实 credential，也不得创建普通权限的明文 request 文件。日志只允许记录 HTTP 状态、公共 error code、request ID 和耗时。
 
-## 错误处理
+## 当前部署门禁
 
-错误响应：
-
-```json
-{
-  "error": {
-    "code": "NO_FRESH_CODE",
-    "message": "No matching fresh verification code was found",
-    "retryable": true,
-    "retry_after_seconds": 2,
-    "request_id": "..."
-  }
-}
-```
-
-重要状态：
-
-- `401 AUTHENTICATION_REQUIRED`：CodeRelay Bearer Token 缺失或无效；
-- `404 NO_FRESH_CODE`：没有符合新鲜度的验证码；
-- `409 AMBIGUOUS_CODE`：多个候选无法安全判定；
-- `422 INVALID_CODE_REQUEST`：请求级 credential 格式无效；
-- `424 SOURCE_REAUTH_REQUIRED`：Outlook refresh token 需要调用方更新；
-- `429 RATE_LIMITED` / `SOURCE_RATE_LIMITED`：尊重 `Retry-After`；
-- `502/503/504`：上游失败、同步中或超时。
-
-所有 API 响应设置 `Cache-Control: no-store`。调用项目也不得缓存或记录成功响应。
-
-## 开发测试
-
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-pytest
-ruff check coderelay tests binary_entry.py
-```
-
-测试覆盖：
-
-- 无 Bearer Token 无法取码；
-- 请求体 credential 不出现在验证错误中；
-- TOTP RFC 向量；
-- Outlook password 丢弃、refresh token 轮换、XOAUTH2、readonly 和 `BODY.PEEK`；
-- FlySMS 三段式一致性校验和 SSRF 防护；
-- `not_before`、旧码拒绝和歧义检测；
-- Provider 请求结束清理；
-- 有限轮询、超时和限流；
-- PyInstaller 单文件 smoke test。
-
-真实凭据不得进入 fixture、Git 或 CI。
+Phase 5 只证明并发、性能、资源和安全边界。真实 Outlook 新鲜码 HTTP 200、成功响应 rotation、显式未读状态、Caddy/VPS canary 和消费项目端到端仍需按部署验收执行。仓库已经是 Go-only，但这不应被误解为这些真实外部门禁已自动通过。

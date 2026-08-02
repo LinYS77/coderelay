@@ -1,6 +1,6 @@
-# CodeRelay 0.3 API 调用指南
+# CodeRelay Go API 调用指南
 
-本文档提供给调用 `https://2fa.077.li` 的后端项目。CodeRelay 0.3 是无状态取码服务：每次请求携带本次上游凭据，服务器不持久化这些凭据。
+本文档提供给调用 `https://2fa.077.li` 的后端项目。CodeRelay Go 是无状态取码服务：每次请求携带本次上游凭据，服务器不持久化这些凭据。
 
 ## 1. 固定契约
 
@@ -44,10 +44,13 @@ CODERELAY_API_TOKEN=<管理员签发的共享Token>
 
 共享不会导致请求级 Outlook/FlySMS/TOTP credential 串用，但意味着两个项目共享：
 
-- 每 Token 限流配额；
+- 每 Token `240/minute`、burst `40` 的 token bucket；
+- 最多 20 active + 4 queued、queue wait 2 秒的服务 admission；
 - Token撤销故障域；
 - Token轮换窗口；
 - 单项目审计区分能力。
+
+CodeRelay 还按来源 IP 应用独立 token bucket，且两类限流状态都有硬容量上限。第 25 个同时到达的取码请求不会进入无界队列，而会在 `<100 ms` 内返回 `503 SERVER_BUSY`；被 admission、鉴权或限流拒绝的 credential body 不会被读取。
 
 因此轮换时必须协调更新两个项目。若未来需要独立撤销或独立限流，再改成每项目一枚Token。
 
@@ -222,7 +225,9 @@ wait_seconds：0～30，推荐 30
 
 不要在调用项目中每秒高频轮询。优先使用一次 `wait_seconds=30` 请求。
 
-## 8. Python 异步客户端
+## 8. Python 异步消费端示例
+
+以下只是外部调用项目示例，不是 CodeRelay 服务实现；仓库中的服务端仅保留 Go。
 
 依赖：
 
@@ -296,7 +301,7 @@ async def resolve_code(
         raise CodeRelayError(status=response.status_code, payload=payload)
 
     code = payload.get("code")
-    if not isinstance(code, str) or len(code) != 6 or not code.isdigit():
+    if not isinstance(code, str) or len(code) != 6 or not code.isascii() or not code.isdigit():
         raise RuntimeError("CodeRelay returned an invalid success payload")
     return code, credential_update
 ```
@@ -384,12 +389,13 @@ export async function resolveCode(body) {
 | 429 | `RATE_LIMITED` / `SOURCE_RATE_LIMITED` | 尊重 `Retry-After` |
 | 502 | `UPSTREAM_FAILURE` | 有限指数退避 |
 | 502 | `UPSTREAM_SCHEMA_CHANGED` | 不盲目重试；通知维护者 |
+| 503 | `SERVER_BUSY` | admission 已满；尊重 `Retry-After`，只做有限抖动退避 |
 | 503 | `SOURCE_SYNCING` | 按 `Retry-After` 重试 |
 | 504 | `UPSTREAM_TIMEOUT` | 有限指数退避 |
 
 任何响应都应先处理可选 `credential_update`。
 
-推荐最多重试 2～3 次。不要无限重试 401、409、422 或 424。
+推荐最多重试 2～3 次。对 `SERVER_BUSY` 使用 `Retry-After` 加随机抖动，且总时长仍受 90 秒调用方 deadline 限制；不要无限重试 401、409、422、424 或任何 503。
 
 ## 11. 响应与日志安全
 

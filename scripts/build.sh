@@ -5,15 +5,16 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 
 export GOTOOLCHAIN=${CODERELAY_GO_TOOLCHAIN:-go1.26.5}
-VERSION=${CODERELAY_VERSION:-1.0.0-phase4}
+VERSION=${CODERELAY_VERSION:-1.0.0-phase5}
 GOOS=${GOOS:-linux}
 GOARCH=${GOARCH:-amd64}
-OUTPUT=${CODERELAY_GO_OUTPUT:-dist/coderelay-go}
+OUTPUT=${CODERELAY_GO_OUTPUT:-dist/coderelay}
 
 mkdir -p "$(dirname -- "$OUTPUT")"
 CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
   go build \
   -trimpath \
+  -buildvcs=false \
   -tags netgo,osusergo \
   -ldflags "-s -w -X github.com/LinYS77/coderelay/internal/version.Value=${VERSION}" \
   -o "$OUTPUT" \

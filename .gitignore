@@ -1,23 +1,13 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.ruff_cache/
-.venv*/
-venv/
+# Go build, test, profiling, and generated release artifacts
 build/
 dist/
-reference/
-*.spec.bak
+coverage.out
+*.prof
+*.trace
 *.log
 
-# Runtime state and credentials
+# Runtime configuration and credentials
 config.toml
-config.go.toml
-config.python.toml
 secrets/
 data/
 *.token-cache
@@ -25,9 +15,9 @@ data/
 *.key
 *.secret
 *.test
-coverage.out
-*.prof
-*.trace
+
+# Local reference material
+reference/
 
 # Editors and OS
 .idea/

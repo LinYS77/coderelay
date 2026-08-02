@@ -7,21 +7,21 @@ import (
 	"testing"
 )
 
-func TestGoExampleConfigLoadsAndIsBounded(t *testing.T) {
-	cfg, err := Load("../../config.go.example.toml")
+func TestExampleConfigLoadsAndIsBounded(t *testing.T) {
+	cfg, err := Load("../../config.example.toml")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Address() != "127.0.0.1:8787" {
 		t.Fatalf("address = %s", cfg.Address())
 	}
-	if cfg.Server.MaxInboundConnections != 128 || cfg.Server.MaxConcurrentCodeRequests != 20 || cfg.Server.MaxQueuedCodeRequests != 4 {
+	if cfg.Server.MaxInboundConnections != 128 || cfg.Server.MaxConcurrentCodeRequests != 20 || cfg.Server.MaxQueuedCodeRequests != 4 || cfg.Server.AdmissionWaitSeconds != 2 {
 		t.Fatal("connection or admission defaults are wrong")
 	}
 	if cfg.Server.MaxWaitSeconds != 30 || cfg.Server.HTTPMaxConnections != 20 || cfg.Providers.FlySMS.BaseURL != FlySMSBaseURL {
 		t.Fatal("FlySMS HTTP defaults are wrong")
 	}
-	if cfg.Security.APIRateLimitBurst != 40 || cfg.Security.APIRateLimitPerMinute != 240 {
+	if cfg.Security.APIRateLimitBurst != 40 || cfg.Security.APIRateLimitPerMinute != 240 || cfg.Security.MaxIPRateLimitEntries != 10_000 || cfg.Security.MaxPrincipalRateLimitEntries != 1_000 {
 		t.Fatal("rate defaults are wrong")
 	}
 	if len(cfg.Providers.Outlook.Extractor.Patterns) != 1 || cfg.Providers.Outlook.Extractor.GenericRequiresKeyword || len(cfg.Providers.FlySMS.Extractor.Patterns) != 1 {

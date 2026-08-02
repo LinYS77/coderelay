@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -19,6 +20,86 @@ import (
 	"github.com/LinYS77/coderelay/internal/domain"
 	"github.com/LinYS77/coderelay/internal/secretfile"
 )
+
+func TestShutdownDeadlineCancelsActiveRequest(t *testing.T) {
+	cfg := config.Default()
+	cfg.Server.AllowedHosts = []string{"127.0.0.1", "localhost"}
+	token, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(token)
+	defer clear(hash)
+	hashPath := filepath.Join(t.TempDir(), "api.sha256")
+	if err := secretfile.WriteExclusive(hashPath, hash); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Security.APITokenHashFiles = []string{hashPath}
+	verifier, err := auth.LoadVerifier(cfg.Security)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver := &cancelOnlyResolver{entered: make(chan struct{}), canceled: make(chan struct{})}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler, err := api.NewHandler(cfg, verifier, resolver, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Server.ShutdownTimeoutSeconds = 0.05
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- serveListener(ctx, cfg, handler, logger, listener) }()
+	baseURL := "http://" + listener.Addr().String()
+	waitForLive(t, baseURL)
+
+	payload := []byte(`{"type":"totp","credential":"GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ","min_ttl":0}`)
+	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/code", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+string(token))
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr == nil {
+			_ = response.Body.Close()
+		}
+	}()
+	select {
+	case <-resolver.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("active request did not enter resolver")
+	}
+
+	cancel()
+	select {
+	case <-resolver.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown deadline did not cancel active request")
+	}
+	select {
+	case serveErr := <-serveDone:
+		if !errors.Is(serveErr, context.DeadlineExceeded) {
+			t.Fatalf("serve error=%v, want deadline exceeded", serveErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("forced shutdown did not finish")
+	}
+	select {
+	case <-clientDone:
+	case <-time.After(time.Second):
+		t.Fatal("client request remained blocked")
+	}
+	if handler.ActiveRequests() != 0 || handler.QueuedRequests() != 0 {
+		t.Fatalf("active=%d queued=%d", handler.ActiveRequests(), handler.QueuedRequests())
+	}
+}
 
 func TestGracefulShutdownWaitsForActiveRequestAndDropsReadiness(t *testing.T) {
 	cfg := config.Default()
@@ -101,6 +182,19 @@ func TestGracefulShutdownWaitsForActiveRequestAndDropsReadiness(t *testing.T) {
 	}
 }
 
+type cancelOnlyResolver struct {
+	entered  chan struct{}
+	canceled chan struct{}
+	once     sync.Once
+}
+
+func (r *cancelOnlyResolver) Resolve(ctx context.Context, _ *domain.Command) (domain.Result, error) {
+	r.once.Do(func() { close(r.entered) })
+	<-ctx.Done()
+	close(r.canceled)
+	return domain.Result{}, ctx.Err()
+}
+
 type shutdownResolver struct {
 	entered chan struct{}
 	release chan struct{}
@@ -157,4 +251,5 @@ func waitForNotReady(t *testing.T, handler http.Handler) {
 	t.Fatal("readiness did not drop")
 }
 
+var _ api.Resolver = (*cancelOnlyResolver)(nil)
 var _ api.Resolver = (*shutdownResolver)(nil)
