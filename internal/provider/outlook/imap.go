@@ -249,13 +249,18 @@ func (s *imapSession) fetchBatch(ctx context.Context, maxMessages int, maxBytes 
 			}
 			if uid == 0 || internalDate.IsZero() || bodyCount != 1 || len(raw) == 0 {
 				clear(raw)
-				continue
+				destroyMessages(messages)
+				_ = s.conn.Close()
+				return domain.ErrUpstreamSchemaChanged
 			}
 			message, parseErr := parseFetchedMessageWithLimit(raw, uid, internalDate.UTC(), maxBytes)
 			clear(raw)
-			if parseErr == nil {
-				messages = append(messages, message)
+			if parseErr != nil {
+				destroyMessages(messages)
+				_ = s.conn.Close()
+				return parseErr
 			}
+			messages = append(messages, message)
 		}
 		return command.Close()
 	})
