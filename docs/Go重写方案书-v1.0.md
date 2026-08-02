@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成，尚未开始 Go 实现
+> 文档状态：设计完成；Phase 0 风险原型已通过，Phase 1 尚未开始
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
@@ -1890,6 +1890,8 @@ Go新增字段会被Python的`extra=forbid`拒绝，所以不能虚假宣称同�
 ## 25. Python → Go 迁移计划
 
 ### Phase 0：风险原型
+
+实施与门禁记录位于 [`prototypes/outlook-go/`](../prototypes/outlook-go/README.md)。该目录明确标记为 throwaway prototype，不进入 Python 生产运行路径。
 
 只实现：
 

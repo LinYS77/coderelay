@@ -17,6 +17,41 @@ env:
   PYTHONUNBUFFERED: "1"
 
 jobs:
+  phase0-go-prototype:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.25.12", "1.26.5"]
+    defaults:
+      run:
+        working-directory: prototypes/outlook-go
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: prototypes/outlook-go/go.sum
+      - name: Download pinned prototype dependencies
+        run: go mod download
+      - name: Format and vet
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+      - name: Tests and race detector
+        run: |
+          go test -count=1 ./...
+          go test -race -count=1 ./...
+      - name: Reachable vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+          govulncheck ./...
+      - name: Static prototype build
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/coderelay-outlook-phase0 ./cmd/outlook-phase0
+
   test:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
