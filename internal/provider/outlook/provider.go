@@ -170,6 +170,30 @@ func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBe
 		}
 
 		messages, fetchErr := session.fetchBatch(attemptCtx, p.settings.MaxMessages, p.settings.MaxMessageBytes)
+		if fetchErr != nil && !errors.Is(fetchErr, domain.ErrUpstreamSchemaChanged) && attemptCtx.Err() == nil && reconnects < 2 {
+			destroyMessages(messages)
+			reconnects++
+			p.unregisterSession(session)
+			session.Abort()
+			session, err = p.openForResolve(attemptCtx, &parsed, accessToken)
+			if isIMAPAuthError(err) && !forceRefreshUsed {
+				forceRefreshUsed = true
+				clear(accessToken)
+				accessToken, accessExpiresAt, err = p.refreshAccess(attemptCtx, &parsed, &rotation)
+				if err == nil {
+					session, err = p.openForResolve(attemptCtx, &parsed, accessToken)
+				}
+			}
+			if err == nil && !p.registerSession(session) {
+				session.Abort()
+				err = domain.ErrUpstreamFailure
+			}
+			if err == nil {
+				messages, fetchErr = session.fetchBatch(attemptCtx, p.settings.MaxMessages, p.settings.MaxMessageBytes)
+			} else {
+				fetchErr = mapIMAPError(err)
+			}
+		}
 		cancelAttempt()
 		if fetchErr != nil {
 			destroyMessages(messages)
