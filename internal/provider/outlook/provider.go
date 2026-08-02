@@ -29,6 +29,9 @@ type Provider struct {
 	sessions     map[*imapSession]struct{}
 	closed       bool
 	openOverride func(context.Context, *Credential, []byte) (*imapSession, error)
+	lifecycle    context.Context
+	cancelLife   context.CancelFunc
+	closeOnce    sync.Once
 }
 
 func New(cfg config.Config) (*Provider, error) {
@@ -43,42 +46,59 @@ func New(cfg config.Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
+	lifecycle, cancelLife := context.WithCancel(context.Background())
 	return &Provider{
-		settings:  settings,
-		oauth:     oauth,
-		extractor: extractor.New(extractor.DefaultSettings()),
-		maxWait:   cfg.Server.MaxWaitSeconds,
-		now:       time.Now,
-		sleep:     sleepContext,
-		jitter:    boundedJitter,
-		sessions:  make(map[*imapSession]struct{}),
+		settings:   settings,
+		oauth:      oauth,
+		extractor:  extractor.New(extractor.DefaultSettings()),
+		maxWait:    cfg.Server.MaxWaitSeconds,
+		now:        time.Now,
+		sleep:      sleepContext,
+		jitter:     boundedJitter,
+		sessions:   make(map[*imapSession]struct{}),
+		lifecycle:  lifecycle,
+		cancelLife: cancelLife,
 	}, nil
 }
 
 func newProviderForTest(settings config.OutlookConfig, oauth *OAuthClient) *Provider {
+	lifecycle, cancelLife := context.WithCancel(context.Background())
 	return &Provider{
-		settings:  settings,
-		oauth:     oauth,
-		extractor: extractor.New(extractor.DefaultSettings()),
-		maxWait:   30,
-		now:       time.Now,
-		sleep:     sleepContext,
-		jitter:    func(value time.Duration) time.Duration { return value },
-		sessions:  make(map[*imapSession]struct{}),
+		settings:   settings,
+		oauth:      oauth,
+		extractor:  extractor.New(extractor.DefaultSettings()),
+		maxWait:    30,
+		now:        time.Now,
+		sleep:      sleepContext,
+		jitter:     func(value time.Duration) time.Duration { return value },
+		sessions:   make(map[*imapSession]struct{}),
+		lifecycle:  lifecycle,
+		cancelLife: cancelLife,
 	}
 }
 
 func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBefore *time.Time, waitSeconds int) ([6]byte, *domain.CredentialUpdate, error) {
 	var empty [6]byte
-	if p == nil || p.oauth == nil || p.extractor == nil || p.now == nil || p.sleep == nil || p.jitter == nil || source == nil || ctx == nil || waitSeconds < 0 || waitSeconds > p.maxWait {
+	if p == nil || p.oauth == nil || p.extractor == nil || p.now == nil || p.sleep == nil || p.jitter == nil || p.lifecycle == nil || source == nil || ctx == nil || waitSeconds < 0 || waitSeconds > p.maxWait {
 		return empty, nil, domain.ErrInvalidCodeRequest
 	}
 	if err := ctx.Err(); err != nil {
 		return empty, nil, err
 	}
+	select {
+	case <-p.lifecycle.Done():
+		return empty, nil, domain.ErrUpstreamFailure
+	default:
+	}
 	resolveStart := p.now().UTC()
 	pollDeadline := resolveStart.Add(time.Duration(waitSeconds) * time.Second)
-	operationCtx, cancelOperation := context.WithTimeout(ctx, outlookAttemptTimeout+time.Duration(waitSeconds)*time.Second)
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	stopLifecycle := context.AfterFunc(p.lifecycle, cancelRequest)
+	defer func() {
+		stopLifecycle()
+		cancelRequest()
+	}()
+	operationCtx, cancelOperation := context.WithTimeout(requestCtx, outlookAttemptTimeout+time.Duration(waitSeconds)*time.Second)
 	defer cancelOperation()
 	parsed, err := ParseCredential(source.Bytes())
 	if err != nil {
@@ -335,19 +355,27 @@ func (p *Provider) unregisterSession(session *imapSession) {
 }
 
 func (p *Provider) Close() {
-	p.mu.Lock()
-	p.closed = true
-	sessions := make([]*imapSession, 0, len(p.sessions))
-	for session := range p.sessions {
-		sessions = append(sessions, session)
+	if p == nil {
+		return
 	}
-	p.mu.Unlock()
-	for _, session := range sessions {
-		session.Abort()
-	}
-	if p.oauth != nil {
-		p.oauth.Close()
-	}
+	p.closeOnce.Do(func() {
+		if p.cancelLife != nil {
+			p.cancelLife()
+		}
+		p.mu.Lock()
+		p.closed = true
+		sessions := make([]*imapSession, 0, len(p.sessions))
+		for session := range p.sessions {
+			sessions = append(sessions, session)
+		}
+		p.mu.Unlock()
+		for _, session := range sessions {
+			session.Abort()
+		}
+		if p.oauth != nil {
+			p.oauth.Close()
+		}
+	})
 }
 
 func adoptRotation(credential *Credential, rotated []byte, current *[]byte) error {
