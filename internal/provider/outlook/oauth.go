@@ -180,25 +180,28 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	}
 	defer clearOAuthFields(payload)
 	if response.StatusCode == http.StatusTooManyRequests {
-		return nil, domain.WithRetryAfter(domain.ErrSourceRateLimited, parseRetryAfterOutlook(response.Header.Get("Retry-After"), 5, time.Now().UTC()))
+		err := domain.WithRetryAfter(domain.ErrSourceRateLimited, parseRetryAfterOutlook(response.Header.Get("Retry-After"), 5, time.Now().UTC()))
+		return nil, oauthErrorWithRotation(err, payload, credential.RefreshToken)
 	}
 	if response.StatusCode == http.StatusBadRequest {
 		errorCode := optionalString(payload, "error")
+		var mapped error
 		switch errorCode {
 		case "invalid_grant", "interaction_required", "consent_required", "login_required":
-			return nil, domain.ErrSourceReauthRequired
+			mapped = domain.ErrSourceReauthRequired
 		default:
-			return nil, domain.ErrSourceCredentials
+			mapped = domain.ErrSourceCredentials
 		}
+		return nil, oauthErrorWithRotation(mapped, payload, credential.RefreshToken)
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, domain.ErrSourceCredentials
+		return nil, oauthErrorWithRotation(domain.ErrSourceCredentials, payload, credential.RefreshToken)
 	}
 	if response.StatusCode >= 500 {
-		return nil, domain.ErrUpstreamFailure
+		return nil, oauthErrorWithRotation(domain.ErrUpstreamFailure, payload, credential.RefreshToken)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, domain.ErrUpstreamFailure
+		return nil, oauthErrorWithRotation(domain.ErrUpstreamFailure, payload, credential.RefreshToken)
 	}
 	accessToken, ok := requiredString(payload, "access_token", maxAccessTokenSize)
 	if !ok || !validAccessToken(accessToken) {
@@ -210,7 +213,7 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 		if !ok || (value != "" && !hasScope(value, imapScope)) {
 			return nil, domain.ErrSourceCredentials
 		}
-		scopeVerified = value != ""
+		scopeVerified = true
 	}
 	expires, expiresOK := parseExpires(payload["expires_in"])
 	if !expiresOK {
@@ -230,16 +233,11 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 				result.Destroy()
 				return nil, domain.ErrUpstreamSchemaChanged
 			}
-			oldHash := sha256.Sum256(credential.RefreshToken)
-			newHash := sha256.Sum256(candidate)
-			same := subtle.ConstantTimeCompare(oldHash[:], newHash[:])
-			clear(oldHash[:])
-			clear(newHash[:])
-			if same != 1 {
-				result.RotatedRefreshToken = candidate
-			} else {
-				clear(candidate)
+			if replacement, changed := differentRefreshToken(candidate, credential.RefreshToken); changed {
+				result.RotatedRefreshToken = replacement
+				candidate = nil
 			}
+			clear(candidate)
 		}
 	}
 	return result, nil
@@ -308,6 +306,46 @@ func optionalString(fields map[string]json.RawMessage, key string) string {
 		return value
 	}
 	return ""
+}
+
+func oauthErrorWithRotation(err error, fields map[string]json.RawMessage, oldToken []byte) error {
+	candidate, changed := refreshTokenCandidate(fields, oldToken)
+	if !changed {
+		return err
+	}
+	wrapped := domain.WithCredentialUpdate(err, candidate)
+	clear(candidate)
+	return wrapped
+}
+
+func refreshTokenCandidate(fields map[string]json.RawMessage, oldToken []byte) ([]byte, bool) {
+	raw, ok := fields["refresh_token"]
+	if !ok {
+		return nil, false
+	}
+	value, ok := rawString(raw)
+	if !ok || value == "" {
+		return nil, false
+	}
+	candidate := []byte(value)
+	if validateRefreshToken(candidate) != nil {
+		clear(candidate)
+		return nil, false
+	}
+	return differentRefreshToken(candidate, oldToken)
+}
+
+func differentRefreshToken(candidate, oldToken []byte) ([]byte, bool) {
+	oldHash := sha256.Sum256(oldToken)
+	newHash := sha256.Sum256(candidate)
+	same := subtle.ConstantTimeCompare(oldHash[:], newHash[:])
+	clear(oldHash[:])
+	clear(newHash[:])
+	if same == 1 {
+		clear(candidate)
+		return nil, false
+	}
+	return candidate, true
 }
 
 func requiredString(fields map[string]json.RawMessage, key string, maximum int) (string, bool) {

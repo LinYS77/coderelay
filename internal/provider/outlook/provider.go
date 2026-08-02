@@ -232,6 +232,13 @@ func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBe
 func (p *Provider) refreshAccess(ctx context.Context, credential *Credential, rotation *[]byte) ([]byte, time.Time, error) {
 	result, err := p.oauth.Refresh(ctx, credential)
 	if err != nil {
+		if token, cause, ok := consumeOAuthRotationError(err); ok {
+			if adoptErr := adoptRotation(credential, token, rotation); adoptErr == nil {
+				clear(token)
+				return nil, time.Time{}, cause
+			}
+			clear(token)
+		}
 		return nil, time.Time{}, err
 	}
 	access := bytes.Clone(result.AccessToken)
@@ -245,6 +252,20 @@ func (p *Provider) refreshAccess(ctx context.Context, credential *Credential, ro
 	}
 	result.Destroy()
 	return access, expiresAt, nil
+}
+
+func consumeOAuthRotationError(err error) ([]byte, error, bool) {
+	var wrapped *domain.CredentialUpdateError
+	if !errors.As(err, &wrapped) || wrapped == nil || wrapped.Update == nil || len(wrapped.Update.RefreshToken) == 0 {
+		return nil, err, false
+	}
+	cause := wrapped.Cause
+	if cause == nil {
+		cause = domain.ErrUpstreamFailure
+	}
+	token := bytes.Clone(wrapped.Update.RefreshToken)
+	wrapped.Destroy()
+	return token, cause, true
 }
 
 func (p *Provider) openForResolve(ctx context.Context, credential *Credential, accessToken []byte) (*imapSession, error) {
