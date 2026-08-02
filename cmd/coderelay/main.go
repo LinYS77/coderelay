@@ -14,6 +14,7 @@ import (
 	"github.com/LinYS77/coderelay/internal/auth"
 	"github.com/LinYS77/coderelay/internal/config"
 	"github.com/LinYS77/coderelay/internal/provider/flysms"
+	"github.com/LinYS77/coderelay/internal/provider/outlook"
 	"github.com/LinYS77/coderelay/internal/secretfile"
 	"github.com/LinYS77/coderelay/internal/service"
 	"github.com/LinYS77/coderelay/internal/totp"
@@ -70,13 +71,23 @@ func runServe(arguments []string) error {
 		return err
 	}
 	defer flyProvider.Close()
-	resolver := service.NewResolver(totp.New(), flyProvider)
+	outlookProvider, err := outlook.New(cfg)
+	if err != nil {
+		return err
+	}
+	defer outlookProvider.Close()
+	resolver := service.NewResolver(totp.New(), flyProvider, outlookProvider)
 	handler, err := api.NewHandler(cfg, verifier, resolver, logger)
 	if err != nil {
 		return err
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		<-signalCtx.Done()
+		outlookProvider.Close()
+		flyProvider.Close()
+	}()
 	return service.Serve(signalCtx, cfg, handler, logger)
 }
 
@@ -98,7 +109,7 @@ func runValidate(arguments []string) error {
 	}
 	fmt.Fprintf(os.Stdout, "Configuration is valid: %s\n", cfg.ConfigPath)
 	fmt.Fprintln(os.Stdout, "- mode: stateless")
-	fmt.Fprintln(os.Stdout, "- phase: 2 (totp, flysms)")
+	fmt.Fprintln(os.Stdout, "- phase: 3 (totp, flysms, outlook)")
 	return nil
 }
 

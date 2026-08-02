@@ -69,6 +69,10 @@ func sourceCredentialsInvalid() *publicError {
 	return &publicError{Status: 424, Code: "SOURCE_CREDENTIALS_INVALID", Message: "The supplied upstream credentials are invalid"}
 }
 
+func sourceReauthRequired() *publicError {
+	return &publicError{Status: 424, Code: "SOURCE_REAUTH_REQUIRED", Message: "The supplied Outlook credential requires reauthorization"}
+}
+
 func sourceExpired() *publicError {
 	return &publicError{Status: 424, Code: "SOURCE_EXPIRED_OR_DISABLED", Message: "The upstream source is expired or disabled"}
 }

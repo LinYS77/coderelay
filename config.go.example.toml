@@ -1,5 +1,5 @@
-# CodeRelay Go Phase 2 configuration.
-# This file is intentionally separate from config.example.toml used by Python 0.3.
+# CodeRelay Go Phase 3 configuration.
+# Go Phase 3 configuration is intentionally separate from config.example.toml used by Python 0.3.
 
 [server]
 host = "127.0.0.1"
@@ -24,6 +24,15 @@ idle_timeout_seconds = 60.0
 shutdown_timeout_seconds = 90.0
 max_header_bytes = 16384
 max_body_bytes = 131072
+
+[providers.outlook]
+token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+imap_host = "outlook.office365.com"
+imap_port = 993
+imap_timeout_seconds = 15.0
+poll_interval_seconds = 2.0
+max_messages = 10
+max_message_bytes = 262144
 
 [providers.flysms]
 base_url = "https://flysms.xyz/icloud/api/pickup/messages"

@@ -54,7 +54,7 @@ func readCodeCommand(writer http.ResponseWriter, request *http.Request, maxBytes
 	switch provider {
 	case "outlook":
 		provider = ""
-		return nil, invalidCodeRequest()
+		return decodeOutlookCommand(fields, maxWait, now)
 	case "totp":
 		provider = ""
 		return decodeTOTPCommand(fields)
@@ -91,6 +91,40 @@ func decodeTOTPCommand(fields map[string]json.RawMessage) (*domain.Command, erro
 	}, nil
 }
 
+func decodeOutlookCommand(fields map[string]json.RawMessage, maxWait int, now time.Time) (*domain.Command, error) {
+	for key := range fields {
+		if key != "type" && key != "credential" && key != "not_before" && key != "wait_seconds" {
+			return nil, validationError()
+		}
+	}
+	owned, err := decodeCredential(fields, 70_000)
+	if err != nil {
+		return nil, err
+	}
+	waitSeconds := 20
+	if rawWait, exists := fields["wait_seconds"]; exists {
+		if err := json.Unmarshal(rawWait, &waitSeconds); err != nil || waitSeconds < 0 || waitSeconds > 60 || waitSeconds > maxWait {
+			clear(owned)
+			return nil, validationError()
+		}
+	}
+	if waitSeconds > maxWait {
+		clear(owned)
+		return nil, validationError()
+	}
+	notBefore, err := decodeNotBefore(fields["not_before"], now)
+	if err != nil {
+		clear(owned)
+		return nil, err
+	}
+	return &domain.Command{
+		Provider:    domain.ProviderOutlook,
+		Credential:  credential.NewOwned(owned),
+		NotBefore:   notBefore,
+		WaitSeconds: waitSeconds,
+	}, nil
+}
+
 func decodeFlySMSCommand(fields map[string]json.RawMessage, maxWait int, now time.Time) (*domain.Command, error) {
 	for key := range fields {
 		if key != "type" && key != "credential" && key != "not_before" && key != "wait_seconds" {
@@ -107,6 +141,10 @@ func decodeFlySMSCommand(fields map[string]json.RawMessage, maxWait int, now tim
 			clear(owned)
 			return nil, validationError()
 		}
+	}
+	if waitSeconds > maxWait {
+		clear(owned)
+		return nil, validationError()
 	}
 	notBefore, err := decodeNotBefore(fields["not_before"], now)
 	if err != nil {

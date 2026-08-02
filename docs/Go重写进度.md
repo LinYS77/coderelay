@@ -9,17 +9,17 @@
 | Phase 0：真实 Outlook 风险原型 | ✅ PASS | `go-imap/v2 beta.8` 路径通过；细节见 `prototypes/outlook-go/RESULTS.md` |
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
-| Phase 3：Outlook 正式实现 | ⬜ 未开始 | 下一阶段；Phase 0 原型不得直接复制进生产路径 |
+| Phase 3：Outlook 正式实现 | 🟡 实现中 | OAuth/XOAUTH2、readonly IMAP、批量 partial FETCH、MIME、轮询和 `credential_update` 已接入；真实 Outlook 门禁与最终 hardening 尚未完成 |
 | Phase 4：Extractor parity | ⬜ 未开始 |  |
 | Phase 5：并发与安全收口 | ⬜ 未开始 |  |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
-当前生产服务仍为 Python 0.3.0。Go Phase 2 二进制实现 TOTP 和 FlySMS；Outlook 请求仍返回 `422 INVALID_CODE_REQUEST`，不能替换生产服务。
+当前生产服务仍为 Python 0.3.0。Go Phase 3 已接入 Outlook 请求路径，但尚未完成真实 OAuth/IMAP、新鲜码、轮换交付和资源 soak 门禁，不能替换生产服务。
 
 ---
 
-## Phase 1～2 交付
+## Phase 1～3 交付（Phase 3 实现阶段）
 
 正式代码位于：
 
@@ -34,6 +34,7 @@ internal/
   domain/
   extractor/
   provider/flysms/
+  provider/outlook/
   ratelimit/
   secretfile/
   service/
@@ -81,12 +82,16 @@ scripts/build-go.sh
 - [x] entitlement、401/403/404/429/503/5xx/timeout 映射；
 - [x] 45 秒 attempt、20 秒单 HTTP、0～30 秒 polling；
 - [x] request-scoped Secret、best-effort clear、日志/序列化脱敏；
+- [x] Outlook credential parser（password 兼容字段不进入 domain）及 OAuth refresh/rotation；
+- [x] Outlook direct TLS、XOAUTH2、readonly `INBOX`、同一请求内 session/NOOP 轮询；
+- [x] UID/InternalDate、单次批量 streaming `BODY.PEEK` partial FETCH、bounded MIME 解析；
+- [x] 成功与业务错误响应的 `credential_update` 传播；
 - [x] graceful shutdown 基础；
 - [x] CGO=0 Linux amd64 静态二进制；
 - [x] Go 1.25.12 / 1.26.5 CI；
 - [x] race、fuzz smoke、staticcheck、govulncheck。
 
-## Phase 1～2 验收结果
+## Phase 1～2 验收结果（Phase 3 之前的已完成门禁）
 
 受控 handler 测试：
 
@@ -176,12 +181,20 @@ SHA-256: 8203cfa0a8a35fb998323464f60f7644535a6446a039a1480300ea8a002e9227
 ELF x86-64, statically linked, stripped
 ```
 
-## Phase 1 保留边界
+## Phase 3 当前验证
 
-1. Go Phase 2 不是生产替代品，只支持 TOTP 和 FlySMS，尚无 Outlook；
-2. 不实现正式 Outlook Provider；
-3. 不复制 Phase 0 throwaway 实现；
-4. 不持久化任何 TOTP Secret 或验证码；
-5. 不跨请求缓存 TOTP 结果；
-6. 不开启 CORS、UI、docs、pprof 或公网 listener；
-7. Phase 3 开始前继续保留 Python 0.3.0 生产基线与回滚能力。
+```text
+Go tests (含 Outlook parser/OAuth/IMAP/MIME/API update)：PASS
+Go 1.25.12 / 1.26.5 vet、race、staticcheck：PASS
+Outlook fuzz credential/MIME smoke：PASS
+真实 Outlook OAuth/IMAP/新鲜码/rotation/100-cycle soak：待执行
+```
+
+## Phase 1～3 保留边界
+
+1. Go Phase 3 尚未成为生产替代品；真实 Outlook 门禁、Extractor parity、并发 soak 和部署验收仍未完成；
+2. 正式 Outlook Provider 不得退回复制 Phase 0 throwaway 实现；
+3. 不持久化任何 TOTP Secret、Outlook/FlySMS credential、邮件或验证码；
+4. 不跨请求缓存 TOTP 结果、OAuth access/refresh token 或 IMAP session；
+5. 不开启 CORS、UI、docs、pprof 或公网 listener；
+6. 继续保留 Python 0.3.0 生产基线与回滚能力。

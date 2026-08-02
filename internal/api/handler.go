@@ -206,34 +206,44 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 	result, err := h.resolver.Resolve(request.Context(), command)
 	if err != nil {
 		result.Destroy()
+		update := domain.CredentialUpdateOf(err)
+		defer func() {
+			if update != nil {
+				update.Destroy()
+			}
+			var wrapped *domain.CredentialUpdateError
+			if errors.As(err, &wrapped) {
+				wrapped.Destroy()
+			}
+		}()
 		if request.Context().Err() != nil || errors.Is(err, context.Canceled) {
 			return
 		}
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, domain.ErrUpstreamTimeout) {
-			writePublicError(writer, id, upstreamTimeout())
+			writePublicErrorWithUpdate(writer, id, upstreamTimeout(), update)
 			return
 		}
 		if errors.Is(err, domain.ErrInvalidCodeRequest) {
-			writePublicError(writer, id, invalidCodeRequest())
+			writePublicErrorWithUpdate(writer, id, invalidCodeRequest(), update)
 			return
 		}
 		if problem := providerError(err); problem != nil {
-			writePublicError(writer, id, problem)
+			writePublicErrorWithUpdate(writer, id, problem, update)
 			return
 		}
 		provider := string(command.Provider)
 		h.logger.Error("request_failed", "request_id", id, "provider", provider, "stage", "resolve", "error_code", "INTERNAL_ERROR", "status", 500)
-		writePublicError(writer, id, internalError())
+		writePublicErrorWithUpdate(writer, id, internalError(), update)
 		return
 	}
 	provider := string(command.Provider)
 	defer result.Destroy()
 	if !validSixDigitCode(result.Code) {
 		h.logger.Error("request_failed", "request_id", id, "provider", provider, "stage", "resolve", "error_code", "INVALID_PROVIDER_RESULT", "status", 500)
-		writePublicError(writer, id, internalError())
+		writePublicErrorWithUpdate(writer, id, internalError(), result.CredentialUpdate)
 		return
 	}
-	if err := writeSuccess(writer, result.Code); err != nil {
+	if err := writeSuccess(writer, result.Code, result.CredentialUpdate); err != nil {
 		h.logger.Warn("response_write_failed", "request_id", id, "provider", provider, "stage", "response", "error_code", "WRITE_FAILED")
 	}
 }
@@ -247,6 +257,8 @@ func providerError(err error) *publicError {
 		return ambiguousCode()
 	case errors.Is(err, domain.ErrSourceCredentials):
 		return sourceCredentialsInvalid()
+	case errors.Is(err, domain.ErrSourceReauthRequired):
+		return sourceReauthRequired()
 	case errors.Is(err, domain.ErrSourceExpired):
 		return sourceExpired()
 	case errors.Is(err, domain.ErrSourceRateLimited):

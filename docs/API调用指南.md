@@ -215,7 +215,7 @@ async def request_current_code(credential: str) -> str:
 ```text
 wait_seconds：0～30，推荐 30
 连接超时：5 秒
-调用方整体超时：75 秒
+调用方整体超时：90 秒
 ```
 
 已经开始的上游读取使用独立硬超时，不会被较短的轮询窗口中途截断，因此实际 HTTP 时长可能略超过 `wait_seconds`。
@@ -273,7 +273,7 @@ async def resolve_code(
             body["not_before"] = not_before.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(75.0, connect=5.0),
+        timeout=httpx.Timeout(90.0, connect=5.0),
         follow_redirects=False,
     ) as client:
         response = await client.post(
@@ -331,7 +331,7 @@ export async function resolveCode(body) {
     },
     body: JSON.stringify(body),
     redirect: "error",
-    signal: AbortSignal.timeout(75_000),
+    signal: AbortSignal.timeout(90_000),
   });
 
   const payload = await response.json();

@@ -18,9 +18,9 @@ https://2fa.077.li
 
 完整调用契约见 [`docs/API调用指南.md`](docs/API调用指南.md)。
 
-面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)，实施状态见 [`docs/Go重写进度.md`](docs/Go重写进度.md)。Phase 0、Phase 1 和 Phase 2 均已通过；FlySMS 的真实 `HTTP 200 + six-digit code` 与 `NO_FRESH_CODE` 两条门禁均完成。当前 Go 二进制支持 TOTP 和 FlySMS，但尚无 Outlook，因此生产实现仍为 Python 0.3.0。
+面向 1 vCPU / 2 GiB、稳定 20 并发的 Go 重写设计见 [`docs/Go重写方案书-v1.0.md`](docs/Go重写方案书-v1.0.md)，实施状态见 [`docs/Go重写进度.md`](docs/Go重写进度.md)。Phase 0、Phase 1 和 Phase 2 均已通过；Phase 3 正在接入 Outlook 正式 Provider，尚未完成真实 Outlook 门禁，因此生产实现仍为 Python 0.3.0。
 
-Go Phase 2 本地验证与构建：
+Go Phase 3 本地验证与构建：
 
 ```bash
 GOTOOLCHAIN=go1.26.5 go test -race ./...

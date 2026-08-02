@@ -1,6 +1,6 @@
 # CodeRelay Go 重写方案书（v1.0）
 
-> 文档状态：设计完成；Phase 0、Phase 1、Phase 2 已通过，Phase 3 尚未开始
+> 文档状态：设计完成；Phase 0、Phase 1、Phase 2 已通过，Phase 3 实现中
 > 目标版本：CodeRelay Go 1.0.0
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM

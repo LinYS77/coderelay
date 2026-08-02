@@ -1,4 +1,4 @@
-// Package config loads and validates the Phase 2 Go service configuration.
+// Package config loads and validates the Phase 3 Go service configuration.
 package config
 
 import (
@@ -20,8 +20,11 @@ import (
 )
 
 const (
-	maxConfigBytes = 1 << 20
-	FlySMSBaseURL  = "https://flysms.xyz/icloud/api/pickup/messages"
+	maxConfigBytes  = 1 << 20
+	FlySMSBaseURL   = "https://flysms.xyz/icloud/api/pickup/messages"
+	OutlookTokenURL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+	OutlookIMAPHost = "outlook.office365.com"
+	OutlookIMAPPort = 993
 )
 
 var ErrInvalid = errors.New("invalid CodeRelay configuration")
@@ -68,7 +71,18 @@ type SecurityConfig struct {
 }
 
 type ProviderConfig struct {
-	FlySMS FlySMSConfig `toml:"flysms"`
+	Outlook OutlookConfig `toml:"outlook"`
+	FlySMS  FlySMSConfig  `toml:"flysms"`
+}
+
+type OutlookConfig struct {
+	TokenURL            string  `toml:"token_url"`
+	IMAPHost            string  `toml:"imap_host"`
+	IMAPPort            int     `toml:"imap_port"`
+	IMAPTimeoutSeconds  float64 `toml:"imap_timeout_seconds"`
+	PollIntervalSeconds float64 `toml:"poll_interval_seconds"`
+	MaxMessages         int     `toml:"max_messages"`
+	MaxMessageBytes     int64   `toml:"max_message_bytes"`
 }
 
 type FlySMSConfig struct {
@@ -113,6 +127,15 @@ func Default() Config {
 			MaxPrincipalRateLimitEntries: 1_000,
 		},
 		Providers: ProviderConfig{
+			Outlook: OutlookConfig{
+				TokenURL:            OutlookTokenURL,
+				IMAPHost:            OutlookIMAPHost,
+				IMAPPort:            OutlookIMAPPort,
+				IMAPTimeoutSeconds:  15,
+				PollIntervalSeconds: 2,
+				MaxMessages:         10,
+				MaxMessageBytes:     256 << 10,
+			},
 			FlySMS: FlySMSConfig{
 				BaseURL:             FlySMSBaseURL,
 				FetchTimeoutSeconds: 45,
@@ -259,6 +282,15 @@ func (c Config) Validate() error {
 	}
 	if c.Server.MaxBodyBytes < 1<<10 || c.Server.MaxBodyBytes > 128<<10 {
 		return invalid("max_body_bytes is outside 1024..131072")
+	}
+	if c.Providers.Outlook.TokenURL != OutlookTokenURL || c.Providers.Outlook.IMAPHost != OutlookIMAPHost || c.Providers.Outlook.IMAPPort != OutlookIMAPPort {
+		return invalid("Outlook token endpoint and IMAP host/port must remain fixed")
+	}
+	if !between(c.Providers.Outlook.IMAPTimeoutSeconds, 3, 60) ||
+		!between(c.Providers.Outlook.PollIntervalSeconds, 1, 10) ||
+		c.Providers.Outlook.MaxMessages < 1 || c.Providers.Outlook.MaxMessages > 50 ||
+		c.Providers.Outlook.MaxMessageBytes < 32<<10 || c.Providers.Outlook.MaxMessageBytes > 1<<20 {
+		return invalid("Outlook provider limits are outside their supported range")
 	}
 	if c.Providers.FlySMS.BaseURL != FlySMSBaseURL {
 		return invalid("providers.flysms.base_url must remain the fixed FlySMS API endpoint")

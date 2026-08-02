@@ -11,8 +11,9 @@ import (
 type Provider string
 
 const (
-	ProviderTOTP   Provider = "totp"
-	ProviderFlySMS Provider = "flysms"
+	ProviderTOTP    Provider = "totp"
+	ProviderFlySMS  Provider = "flysms"
+	ProviderOutlook Provider = "outlook"
 )
 
 var ErrInvalidCodeRequest = errors.New("invalid verification-code request")
@@ -38,7 +39,8 @@ func (c *Command) Destroy() {
 }
 
 type Result struct {
-	Code [6]byte
+	Code             [6]byte
+	CredentialUpdate *CredentialUpdate
 }
 
 func (r *Result) Destroy() {
@@ -46,4 +48,8 @@ func (r *Result) Destroy() {
 		return
 	}
 	clear(r.Code[:])
+	if r.CredentialUpdate != nil {
+		r.CredentialUpdate.Destroy()
+		r.CredentialUpdate = nil
+	}
 }
