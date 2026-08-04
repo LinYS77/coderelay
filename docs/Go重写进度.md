@@ -10,7 +10,7 @@
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
 | Phase 3：Outlook 正式实现 | 🟡 实现中 | 显式 IMAP/Graph 双模式、rotation、bounded读取与本地 hardening 已完成；Graph/IMAP 新鲜码、成功 rotation、未读保持和真实部署门禁仍待完成 |
-| Phase 4：Extractor parity | ✅ PASS | 48 个冻结 parity fixtures + 1 个经审核的日文扩展；contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、多语言 keyword、fallback、ambiguity、freshness、not_before、最新 UID |
+| Phase 4：Extractor parity | ✅ PASS | 48 个冻结 parity fixtures + 日文/葡萄牙语经审核扩展；contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、多语言 keyword、fallback、ambiguity、freshness、not_before、最新 UID |
 | Phase 5：并发与安全收口 | ✅ PASS | 原 Phase 5 资源门禁全部通过；Phase 5.5 增加显式 Outlook `mail_access=imap|graph`、Graph身份绑定、只读Inbox/preview/MIME与bounded polling |
 | Phase 6：真实验收 | 🟡 待外部门禁 | Graph真实自测已证明授权可用；仍需使用Phase 5.5正式二进制完成fresh-code、rotation、未读状态和VPS/Caddy/消费端验收 |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
@@ -101,7 +101,7 @@ scripts/profile-phase5.sh
 - [x] Unicode casefold、HTML visible text、script/style/head/noscript/svg/template 跳过；
 - [x] sender exact/domain、subject keyword、custom pattern、generic fallback、ambiguity；
 - [x] `not_before`、最大邮件年龄、未来 5 分钟边界、最新邮件/UID 优先；
-- [x] canonical fixture contract：49/49 code/error 结果通过；
+- [x] canonical fixture contract：50/50 code/error 结果通过；
 - [x] FIFO queue，queued request 不能被新请求 bypass/starve；
 - [x] 240/min、burst 40 的 IP/principal bucket 和 10,000/1,000 状态硬上限；
 - [x] 第 25 个请求 `<100 ms` `503 SERVER_BUSY`，body reads=0；
@@ -160,6 +160,22 @@ supply chain:
 Go-only cleanup:
   legacy runtime/build artifacts: 0
   current-tree legacy artifacts: 0
+```
+
+## Phase 5.6 Portuguese verification-code keywords
+
+真实 OpenAI 验证邮件（巴西葡萄牙语）中的六位码此前因缺少葡萄牙语 keyword 被 `generic_requires_keyword=true` 安全忽略：
+
+- 增加默认葡萄牙语语义词：`código de verificação`、`código de segurança`、`código de confirmação` 及去掉重音变体 `codigo de verificacao`、`codigo de seguranca`、`codigo de confirmacao`；
+- 增加与真实结构等价、但使用合成数字的 OpenAI 风格葡萄牙语 regression（plain text、golden fixture、base64 MIME 三层）；
+- 继续只接受 ASCII `[0-9]{6}`；`fold` 统一大小写（含重音字母），URL 剥离、freshness、sender、ambiguity 规则不变；
+- golden contract 由 49 个冻结 case 增至 50 个，50/50 通过。
+
+```text
+version: CodeRelay Go 1.0.0-phase5.6
+binary size: 9,384,098 bytes
+SHA-256: 4c20b2bab85ca12c3debf95be0c2954c858269112208e4c8bed125a7c7e14cb7
+canonical fixtures: 50/50
 ```
 
 ## Phase 5.5 Outlook explicit IMAP/Graph mailbox access

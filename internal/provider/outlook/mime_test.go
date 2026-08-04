@@ -53,6 +53,36 @@ func TestJapaneseBase64MIMEFeedsDefaultExtractor(t *testing.T) {
 	}
 }
 
+func TestPortugueseBase64MIMEFeedsDefaultExtractor(t *testing.T) {
+	body := "OpenAI\r\n\r\nInforme este código de verificação temporário para continuar:\r\n\r\n470213\r\n\r\nIgnore este e-mail se não é você que está tentando criar uma conta ChatGPT."
+	raw := []byte("MIME-Version: 1.0\r\n" +
+		"Subject: =?UTF-8?B?" + base64.StdEncoding.EncodeToString([]byte("Código de verificação")) + "?=\r\n" +
+		"From: Service <service@example.com>\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\n" +
+		base64.StdEncoding.EncodeToString([]byte(body)) + "\r\n")
+	subject, sender, text, html, err := parseMIME(raw)
+	if err != nil {
+		t.Fatalf("parseMIME() error = %v", err)
+	}
+	engine, err := codeextractor.New(codeextractor.DefaultSettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 4, 6, 0, 0, 0, time.UTC)
+	code, err := engine.Extract([]codeextractor.Message{{
+		UID:        1,
+		Subject:    subject,
+		Sender:     sender,
+		ReceivedAt: now,
+		Text:       text,
+		HTML:       html,
+	}}, nil, now)
+	if err != nil || code != "470213" {
+		t.Fatalf("code=%q error=%v", code, err)
+	}
+}
+
 func TestParseMIMERejectsMalformed(t *testing.T) {
 	if _, _, _, _, err := parseMIME([]byte("not an RFC 5322 message")); err == nil {
 		t.Fatal("parseMIME accepted malformed message")

@@ -992,6 +992,24 @@
         "code": "123456",
         "error": null
       }
+    },
+    {
+      "name": "portuguese_temporary_verification_code",
+      "settings": "default",
+      "now": "2026-08-04T06:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m51",
+          "uid": 51,
+          "received_at": "2026-08-04T05:59:55Z",
+          "text": "OpenAI\n\nInforme este código de verificação temporário para continuar:\n\n470213\n\nIgnore este e-mail se não é você que está tentando criar uma conta ChatGPT."
+        }
+      ],
+      "expected": {
+        "code": "470213",
+        "error": null
+      }
     }
   ]
 }

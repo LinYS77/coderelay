@@ -37,8 +37,8 @@ max_message_bytes = 262144
 [providers.outlook.extractor]
 senders = []
 sender_domains = []
-subject_keywords = ["verification", "security code", "验证码", "検証コード", "認証コード", "確認コード"]
-patterns = ['(?i)(?:code|验证码|安全码|検証コード|認証コード|確認コード|セキュリティ\s*コード)\D{0,20}(?P<code>\d{6})']
+subject_keywords = ["verification", "security code", "验证码", "検証コード", "認証コード", "確認コード", "código de verificação"]
+patterns = ['(?i)(?:code|验证码|安全码|検証コード|認証コード|確認コード|セキュリティ\s*コード|código de verificação|codigo de verificacao)\D{0,20}(?P<code>\d{6})']
 max_age_seconds = 600
 allow_generic_fallback = true
 generic_requires_keyword = false

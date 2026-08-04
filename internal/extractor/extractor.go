@@ -36,6 +36,9 @@ var (
 		"ワンタイムコード", "ワンタイム コード", "ワンタイムパスワード", "ワンタイム パスワード", "パスコード",
 		"verification code", "security code", "authentication code",
 		"one-time code", "one time code", "passcode", "code", "otp",
+		"código de verificação", "codigo de verificacao",
+		"código de segurança", "codigo de seguranca",
+		"código de confirmação", "codigo de confirmacao",
 	}
 	skippedHTMLTags = map[string]struct{}{
 		"script": {}, "style": {}, "head": {}, "noscript": {}, "svg": {}, "template": {},

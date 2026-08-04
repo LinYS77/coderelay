@@ -46,6 +46,25 @@ func TestExtractJapaneseVerificationKeywords(t *testing.T) {
 	}
 }
 
+func TestExtractPortugueseVerificationKeywords(t *testing.T) {
+	now := time.Date(2026, 8, 4, 6, 0, 0, 0, time.UTC)
+	extractor := mustNew(t, DefaultSettings())
+	cases := []Message{
+		{UID: 1, ReceivedAt: now, Text: "OpenAI\n\nInforme este código de verificação temporário para continuar:\n\n470213\n\nIgnore este e-mail se não é você que está tentando criar uma conta ChatGPT."},
+		{UID: 2, ReceivedAt: now, Text: "Informe este codigo de verificacao temporario para continuar: 571324"},
+		{UID: 3, ReceivedAt: now, Subject: "CÓDIGO DE VERIFICAÇÃO 672435"},
+		{UID: 4, ReceivedAt: now, Text: "Seu código de segurança é 773546"},
+		{UID: 5, ReceivedAt: now, Text: "Codigo de confirmacao: 874657"},
+	}
+	for index, message := range cases {
+		want := []string{"470213", "571324", "672435", "773546", "874657"}[index]
+		code, err := extractor.Extract([]Message{message}, nil, now)
+		if err != nil || code != want {
+			t.Errorf("case %d code=%q error=%v, want %q", index, code, err, want)
+		}
+	}
+}
+
 func TestExtractHonorsFreshnessKeywordsURLsAndASCII(t *testing.T) {
 	now := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC)
 	extractor := mustNew(t, DefaultSettings())
