@@ -34,10 +34,12 @@ jobs:
         run: |
           test -z "$(gofmt -l cmd internal)"
           go vet ./...
-      - name: Tests, race detector, fuzz, and Phase 5 acceptance
+      - name: Unit tests
+        run: go test -count=1 ./...
+      - name: Race detector
+        run: go test -race -count=1 ./...
+      - name: Fuzz smoke
         run: |
-          go test -count=1 ./...
-          go test -race -count=1 ./...
           go test -run '^$' -fuzz FuzzDecodeRootObject -fuzztime=1s ./internal/api
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/totp
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/provider/flysms
@@ -47,6 +49,8 @@ jobs:
           go test -run '^$' -fuzz FuzzResponseContracts -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzRetryAfter -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzBoundedTokenBucket -fuzztime=1s ./internal/ratelimit
+      - name: Phase 5 concurrency acceptance
+        run: |
           go test -v -count=1 -run 'TestTwentyConcurrent(TOTPRequestsAreIsolatedAndFast|CredentialsDoNotCross)' ./internal/api ./internal/provider/flysms
           go test -v -count=1 -run 'Test(TwentyActiveFourQueuedAndTwentyFifthBusy|QueuedRequestWaitsForConfiguredTwoSeconds|QueuedRequestsArePromotedFIFOWithoutNewArrivalBypass)' ./internal/admission
       - name: Staticcheck and reachable vulnerability scan
