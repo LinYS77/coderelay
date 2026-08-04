@@ -25,6 +25,27 @@ func TestExtractFreshCodeFromTextSubjectAndHTML(t *testing.T) {
 	}
 }
 
+func TestExtractJapaneseVerificationKeywords(t *testing.T) {
+	now := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC)
+	extractor := mustNew(t, DefaultSettings())
+	cases := []Message{
+		{UID: 1, ReceivedAt: now, Text: "この一時検証コードを入力して続行してください:\n\n123456\n\n検証コードをリクエストしていない場合、このメールは無視してください。"},
+		{UID: 2, ReceivedAt: now, Subject: "認証コードは 234567 です"},
+		{UID: 3, ReceivedAt: now, Text: "確認コード: 345678"},
+		{UID: 4, ReceivedAt: now, HTML: `<p>セキュリティコード：<strong>456789</strong></p>`},
+		{UID: 5, ReceivedAt: now, Text: "ワンタイムコード 567890"},
+		{UID: 6, ReceivedAt: now, Text: "ワンタイムパスワードは 678901 です"},
+		{UID: 7, ReceivedAt: now, Text: "パスコード: 789012"},
+	}
+	for index, message := range cases {
+		want := []string{"123456", "234567", "345678", "456789", "567890", "678901", "789012"}[index]
+		code, err := extractor.Extract([]Message{message}, nil, now)
+		if err != nil || code != want {
+			t.Errorf("case %d code=%q error=%v, want %q", index, code, err, want)
+		}
+	}
+}
+
 func TestExtractHonorsFreshnessKeywordsURLsAndASCII(t *testing.T) {
 	now := time.Date(2026, 8, 2, 4, 0, 0, 0, time.UTC)
 	extractor := mustNew(t, DefaultSettings())

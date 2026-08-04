@@ -1,6 +1,6 @@
 # CodeRelay Go 重写进度
 
-更新时间：2026-08-02
+更新时间：2026-08-04
 
 ## 总览
 
@@ -10,8 +10,8 @@
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
 | Phase 3：Outlook 正式实现 | 🟡 实现中 | 正式 Provider 与本地 hardening 已完成；真实 OAuth/XOAUTH2/IMAP、`NO_FRESH_CODE` 错误轮换交付通过，新鲜码/未读保持/soak 仍待完成 |
-| Phase 4：Extractor parity | ✅ PASS | 48 个语言无关 golden fixtures；冻结的 code/error contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、keyword、fallback、ambiguity、freshness、not_before、最新 UID |
-| Phase 5：并发与安全收口 | ✅ PASS | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 60 分钟 soak、RSS/FD/goroutine/log gate、static/SBOM 全部通过；Phase 5.3 增加 Outlook explicit IMAP scope、安全 stage 诊断及 mailbox snapshot fallback |
+| Phase 4：Extractor parity | ✅ PASS | 48 个冻结 parity fixtures + 1 个经审核的日文扩展；contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、多语言 keyword、fallback、ambiguity、freshness、not_before、最新 UID |
+| Phase 5：并发与安全收口 | ✅ PASS | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 60 分钟 soak、RSS/FD/goroutine/log gate、static/SBOM 全部通过；Phase 5.4 增加日文验证码语义与 MIME 回归 |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
@@ -93,13 +93,13 @@ scripts/profile-phase5.sh
 - [x] CGO=0 Linux amd64 静态二进制；
 - [x] Go 1.25.12 / 1.26.5 CI；
 - [x] race、全套 fuzz smoke、staticcheck、govulncheck；
-- [x] 共享 `testdata/extractor_golden.json` 语言无关 fixtures（48 cases）；
+- [x] 共享 `testdata/extractor_golden.json` fixtures（48 个 Phase 4 baseline + 1 个经审核的日文扩展）；
 - [x] ASCII 六位数字边界、lookaround 等价手工扫描和 Unicode 数字拒绝；
 - [x] Go RE2 custom named `code` pattern 与启动时配置校验；
 - [x] Unicode casefold、HTML visible text、script/style/head/noscript/svg/template 跳过；
 - [x] sender exact/domain、subject keyword、custom pattern、generic fallback、ambiguity；
 - [x] `not_before`、最大邮件年龄、未来 5 分钟边界、最新邮件/UID 优先；
-- [x] frozen fixture contract：48/48 code/error 结果通过；
+- [x] canonical fixture contract：49/49 code/error 结果通过；
 - [x] FIFO queue，queued request 不能被新请求 bypass/starve；
 - [x] 240/min、burst 40 的 IP/principal bucket 和 10,000/1,000 状态硬上限；
 - [x] 第 25 个请求 `<100 ms` `503 SERVER_BUSY`，body reads=0；
@@ -158,6 +158,25 @@ supply chain:
 Go-only cleanup:
   legacy runtime/build artifacts: 0
   current-tree legacy artifacts: 0
+```
+
+## Phase 5.4 Japanese verification-code extraction hotfix
+
+针对 US IP 触发英文邮件时可提取、其他地区触发日文邮件时返回 `NO_FRESH_CODE` 的情况：
+
+- 根因是默认 keyword 只有中文与英文；日文正文中的 ASCII 六位数因 `generic_requires_keyword=true` 被安全地忽略；
+- 增加语义明确的日文默认词：`検証コード`、`認証コード`、`確認コード`、`セキュリティコード`、`ワンタイムコード`、`ワンタイムパスワード`、`パスコード` 及常见空格变体；
+- 增加与真实结构等价、但使用合成数字的 `一時検証コード` plain-text regression；
+- 增加 UTF-8/base64 MIME → extractor 集成回归，确认问题不在日文 MIME 解码；
+- 更新配置示例中的日文 subject keywords 与 RE2 named-code pattern；
+- 继续只接受 ASCII `[0-9]{6}`，不把全角或其他 Unicode 数字归一化为验证码；
+- 原有 sender、freshness、`not_before`、URL stripping 和 ambiguity fail-closed 规则保持不变。
+
+```text
+version: CodeRelay Go 1.0.0-phase5.4
+binary size: 9,318,562 bytes
+SHA-256: 1b9f9b1e5951fa9c871394441cad181a569aab0b9fc0443a2386d5e92768dd49
+canonical fixtures: 49/49
 ```
 
 ## Phase 5.3 Outlook compatibility and session-reuse hotfix

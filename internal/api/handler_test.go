@@ -35,7 +35,7 @@ func TestHealthAndReadinessArePublic(t *testing.T) {
 	defer cancel()
 
 	live := perform(handler, http.MethodGet, "/health/live", nil, "")
-	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase5.3"`) {
+	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase5.4"`) {
 		t.Fatalf("live: status=%d body=%s", live.Code, live.Body.String())
 	}
 	ready := perform(handler, http.MethodGet, "/health/ready", nil, "")

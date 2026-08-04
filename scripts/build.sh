@@ -5,7 +5,7 @@ ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
 
 export GOTOOLCHAIN=${CODERELAY_GO_TOOLCHAIN:-go1.26.5}
-VERSION=${CODERELAY_VERSION:-1.0.0-phase5.3}
+VERSION=${CODERELAY_VERSION:-1.0.0-phase5.4}
 GOOS=${GOOS:-linux}
 GOARCH=${GOARCH:-amd64}
 OUTPUT=${CODERELAY_GO_OUTPUT:-dist/coderelay}

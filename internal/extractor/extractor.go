@@ -32,6 +32,8 @@ var (
 	unicodeFold        = cases.Fold()
 	defaultWords       = []string{
 		"验证码", "校验码", "动态码", "安全码", "一次性密码",
+		"検証コード", "認証コード", "確認コード", "セキュリティコード", "セキュリティ コード",
+		"ワンタイムコード", "ワンタイム コード", "ワンタイムパスワード", "ワンタイム パスワード", "パスコード",
 		"verification code", "security code", "authentication code",
 		"one-time code", "one time code", "passcode", "code", "otp",
 	}

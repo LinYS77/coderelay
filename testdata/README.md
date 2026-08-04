@@ -9,7 +9,7 @@ Each case contains:
 - messages with provider sequence/UID metadata;
 - the expected six-digit ASCII code or public error code.
 
-The 48 expected outcomes were frozen after the Phase 4 differential gate reached zero mismatches. The retired implementation and exporter are intentionally not retained; any contract change now requires an explicit fixture review plus the Go golden, unit, race, and fuzz gates.
+The original 48 expected outcomes were frozen after the Phase 4 differential gate reached zero mismatches. Case 49 is an explicitly reviewed extension for Japanese `検証コード` messages; it preserves the ASCII six-digit output and ambiguity rules. The retired implementation and exporter are intentionally not retained; any further contract change requires an explicit fixture review plus the Go golden, unit, race, and fuzz gates.
 
 Run:
 

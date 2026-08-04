@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "oracle": "CodeRelay 0.3 frozen canonical extractor",
+  "oracle": "CodeRelay canonical extractor contract (Phase 4 baseline plus reviewed extensions)",
   "settings_profiles": {
     "default": {
       "senders": [],
@@ -972,6 +972,24 @@
       ],
       "expected": {
         "code": "616161",
+        "error": null
+      }
+    },
+    {
+      "name": "japanese_temporary_verification_code",
+      "settings": "default",
+      "now": "2026-08-03T12:00:00Z",
+      "not_before": null,
+      "messages": [
+        {
+          "id": "m50",
+          "uid": 50,
+          "received_at": "2026-08-03T11:59:55Z",
+          "text": "この一時検証コードを入力して続行してください:\n\n123456\n\n検証コードをリクエストしていない場合、このメールは無視してください。"
+        }
+      ],
+      "expected": {
+        "code": "123456",
         "error": null
       }
     }
