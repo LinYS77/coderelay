@@ -139,7 +139,7 @@ jobs:
           (cd /tmp/coderelay-artifact-layout && sha256sum -c coderelay.sha256 && sha256sum -c coderelay.cdx.json.sha256)
       - uses: actions/upload-artifact@v7
         with:
-          name: coderelay-go-phase5.5-linux-amd64
+          name: coderelay-go-phase5.6-linux-amd64
           path: |
             dist/coderelay
             dist/coderelay.sha256
