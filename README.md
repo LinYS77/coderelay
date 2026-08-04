@@ -9,7 +9,7 @@ CodeRelay 是一个 Go 实现的单用户、API-only、无状态验证码解析�
 支持：
 
 1. Base32 TOTP Secret 或 `otpauth://totp/...`；
-2. `email----password----client_id----refresh_token` Outlook 凭据；
+2. `email----password----client_id----refresh_token` Outlook 凭据，显式支持 IMAP 或 Microsoft Graph 邮件访问；
 3. `email---token---https://flysms.xyz/icloud/pickup#...` FlySMS 凭据。
 
 生产域名：
@@ -30,7 +30,7 @@ https://2fa.077.li
     ▼
 CodeRelay Go
     ├─ TOTP：本地 RFC 6238
-    ├─ Outlook：OAuth refresh + readonly IMAP + BODY.PEEK
+    ├─ Outlook：OAuth refresh + explicit IMAP/Graph readonly mailbox access
     └─ FlySMS：固定 HTTPS JSON API
     ▼
 {"code":"123456"}
@@ -41,10 +41,10 @@ CodeRelay：
 - 只监听显式 loopback 地址，公网入口必须由 Caddy 提供；
 - 不把请求级 credential 写入配置、文件、数据库、日志、URL 或跨请求缓存；
 - Outlook compatibility password 解析后立即丢弃；
-- OAuth access/refresh token 和 IMAP session 只属于当前请求；
+- OAuth access/refresh token、IMAP session 和 Graph polling state 只属于当前请求；
 - Microsoft refresh-token rotation 只通过 `credential_update` 交给调用方；
-- Outlook 使用 readonly `INBOX` 和 partial `BODY.PEEK`；
-- Microsoft、Outlook IMAP 和 FlySMS 上游地址均为服务端固定策略；
+- Outlook IMAP 使用 readonly `INBOX` 和 partial `BODY.PEEK`；Graph 只使用固定 Inbox GET、preview 和 bounded MIME `$value`；
+- Microsoft token、Graph、Outlook IMAP 和 FlySMS 上游地址均为服务端固定策略；
 - 所有资源、正文、消息、MIME、连接、请求和 admission 状态都有硬上限。
 
 “无状态”不表示 credential 从未进入内存：HTTPS 解密、解析和上游调用期间它必然短暂存在。保证的是不持久化、不记录、不跨请求保留，并对应用层可控副本进行 best-effort 清理。
@@ -82,6 +82,7 @@ GET /health/ready
 ```json
 {
   "type": "outlook",
+  "mail_access": "graph",
   "credential": "email----password----client_id----refresh_token",
   "not_before": "2026-08-02T03:00:00Z",
   "wait_seconds": 30
@@ -234,12 +235,16 @@ soak 使用随机 CodeRelay API token 和确定性的合成 TOTP credentials，�
 Outlook 鉴权失败时，服务日志只写固定、非敏感的 `source_stage`，不写 OAuth body、token、email 或 credential：
 
 ```text
-outlook_oauth_token  Microsoft token endpoint 拒绝 refresh 请求
-outlook_oauth_scope  refresh token/app consent 未返回所需 IMAP scope
-outlook_imap_auth    Outlook IMAP 拒绝 XOAUTH2 access token
+outlook_oauth_token    Microsoft token endpoint 拒绝 refresh 请求
+outlook_oauth_scope    refresh token/app consent 未返回所需 IMAP scope
+outlook_imap_auth      Outlook IMAP 拒绝 XOAUTH2 access token
+outlook_graph_scope    Graph token 缺少所需 delegated scope
+outlook_graph_identity Graph身份验证或credential email匹配失败
+outlook_graph_list     Graph Inbox列表读取失败
+outlook_graph_message  Graph MIME读取失败
 ```
 
-可用响应中的 `request_id` 在 `journalctl` 中关联。禁止为了诊断临时开启请求 body、OAuth body、IMAP debug writer 或 access log。
+可用响应中的 `request_id` 在 `journalctl` 中关联。日志还包含固定 `mail_access=imap|graph`，但不包含email、message ID或token。禁止为了诊断临时开启请求 body、OAuth/Graph body、IMAP debug writer 或 access log。
 
 ## 本地 runtime snapshot
 
@@ -276,4 +281,4 @@ secret-manager-render-coderelay-json | curl --fail-with-body \
 
 ## 当前部署门禁
 
-Phase 5 只证明并发、性能、资源和安全边界。真实 Outlook 新鲜码 HTTP 200、成功响应 rotation、显式未读状态、Caddy/VPS canary 和消费项目端到端仍需按部署验收执行。仓库已经是 Go-only，但这不应被误解为这些真实外部门禁已自动通过。
+Phase 5 已证明并发、性能、资源和安全边界；Phase 5.5 已完成IMAP/Graph双模式的本地与fake-upstream实现门禁。真实Graph/IMAP新鲜码HTTP 200、成功响应rotation、显式未读状态、Caddy/VPS canary和消费项目端到端仍需按部署验收执行。仓库已经是Go-only，但这不应被误解为这些真实外部门禁已自动通过。

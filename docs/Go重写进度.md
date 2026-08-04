@@ -9,10 +9,10 @@
 | Phase 0：真实 Outlook 风险原型 | ✅ PASS | `go-imap/v2 beta.8` 路径通过；细节见 `prototypes/outlook-go/RESULTS.md` |
 | Phase 1：基础服务 + TOTP | ✅ PASS | 正式 Go 模块、HTTP 骨架、TOTP 和 20 并发门禁完成 |
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
-| Phase 3：Outlook 正式实现 | 🟡 实现中 | 正式 Provider 与本地 hardening 已完成；真实 OAuth/XOAUTH2/IMAP、`NO_FRESH_CODE` 错误轮换交付通过，新鲜码/未读保持/soak 仍待完成 |
+| Phase 3：Outlook 正式实现 | 🟡 实现中 | 显式 IMAP/Graph 双模式、rotation、bounded读取与本地 hardening 已完成；Graph/IMAP 新鲜码、成功 rotation、未读保持和真实部署门禁仍待完成 |
 | Phase 4：Extractor parity | ✅ PASS | 48 个冻结 parity fixtures + 1 个经审核的日文扩展；contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、多语言 keyword、fallback、ambiguity、freshness、not_before、最新 UID |
-| Phase 5：并发与安全收口 | ✅ PASS | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 60 分钟 soak、RSS/FD/goroutine/log gate、static/SBOM 全部通过；Phase 5.4 增加日文验证码语义与 MIME 回归 |
-| Phase 6：真实验收 | ⬜ 未开始 |  |
+| Phase 5：并发与安全收口 | ✅ PASS | 原 Phase 5 资源门禁全部通过；Phase 5.5 增加显式 Outlook `mail_access=imap|graph`、Graph身份绑定、只读Inbox/preview/MIME与bounded polling |
+| Phase 6：真实验收 | 🟡 待外部门禁 | Graph真实自测已证明授权可用；仍需使用Phase 5.5正式二进制完成fresh-code、rotation、未读状态和VPS/Caddy/消费端验收 |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
 仓库现已只保留 Go 服务、Go 测试和语言无关 golden fixtures，旧服务源代码、依赖、测试、配置、构建路径及本地构建环境已移除。Phase 3 尚未完成新鲜 Outlook HTTP 200、成功响应 rotation、显式未读状态和真实部署门禁；仓库 Go-only 不等于 Phase 6/7 已通过。
@@ -87,6 +87,8 @@ scripts/profile-phase5.sh
 - [x] request-scoped Secret、best-effort clear、日志/序列化脱敏；
 - [x] Outlook credential parser（password 兼容字段不进入 domain）及 OAuth refresh/rotation；
 - [x] Outlook direct TLS、XOAUTH2、readonly `INBOX`、同一请求内 session/NOOP 轮询；
+- [x] Outlook Graph no-scope refresh、`/me`身份绑定、readonly Inbox list、preview-first/bounded MIME fallback；
+- [x] Outlook请求显式`mail_access=imap|graph`，省略兼容IMAP且拒绝auto probing；
 - [x] UID/InternalDate、单次批量 streaming `BODY.PEEK` partial FETCH、bounded MIME 解析；
 - [x] 成功与业务错误响应的 `credential_update` 传播；
 - [x] graceful shutdown 基础；
@@ -160,6 +162,31 @@ Go-only cleanup:
   current-tree legacy artifacts: 0
 ```
 
+## Phase 5.5 Outlook explicit IMAP/Graph mailbox access
+
+真实 credential 证明同一 client/user grant 可以取得带 `User.Read`、`Mail.Read`、`Mail.ReadWrite` 的 Graph token，但显式 IMAP scope 返回 `invalid_grant`，且 Graph token 无法用于IMAP XOAUTH2。Phase 5.5据此修正“Outlook账号等于IMAP授权”的错误建模：
+
+- 公共请求新增可选 `mail_access=imap|graph`；省略保持IMAP，拒绝`auto`；
+- IMAP模式继续显式请求固定IMAP scope；Graph模式refresh form完全省略scope；
+- Graph token scope存在时要求`User.Read`及`Mail.Read|Mail.ReadWrite`，`Mail.ReadBasic`单独存在会要求重新授权；
+- Graph固定调用`/me`并要求mail或userPrincipalName与credential email匹配；
+- 只对固定Graph v1.0 endpoint发GET：Inbox list、bodyPreview、必要时bounded MIME `$value`；
+- 不跟随`@odata.nextLink`，不使用caller URL，不发送/PATCH/DELETE/标记已读；
+- request-local MIME去重≤50 IDs/128 KiB，list调用≤70，JSON≤1 MiB，MIME继续服从`max_message_bytes`；
+- Graph 401最多强制refresh一次，403/429/5xx/timeout/schema分别稳定映射；
+- success、`NO_FRESH_CODE`、identity/scope/upstream错误均保留最新rotation；
+- 20个并发Graph credential race回归证明无credential/result串用；
+- 新增固定stage：`outlook_graph_scope`、`outlook_graph_identity`、`outlook_graph_list`、`outlook_graph_message`；
+- 架构决策见`docs/adr/0001-outlook-explicit-mail-access.md`。
+
+```text
+version: CodeRelay Go 1.0.0-phase5.5
+binary size: 9,384,098 bytes
+SHA-256: 028929348b8111ebc686a3ba741d788cfaef6fb3e968a2405d0609df211420e9
+local/fake Graph gates: PASS (dual toolchains, race, 20-concurrency ×100, JSON/MIME fuzz, vet/staticcheck/govulncheck)
+real Graph formal CodeRelay gate: pending external credential/VPS run
+```
+
 ## Phase 5.4 Japanese verification-code extraction hotfix
 
 针对 US IP 触发英文邮件时可提取、其他地区触发日文邮件时返回 `NO_FRESH_CODE` 的情况：
@@ -181,9 +208,9 @@ canonical fixtures: 49/49
 
 ## Phase 5.3 Outlook compatibility and session-reuse hotfix
 
-针对一类 refresh token 在其他工具可用、但 CodeRelay 返回 `SOURCE_CREDENTIALS_INVALID` 的情况：
+Phase 5.3 当时针对“希望使用IMAP的credential”修复了默认资源选择问题。后续Phase 5.5真实证据确认，最初报告的特定credential实际只具备Graph邮件授权；因此本节不是该credential最终根因，只保留为IMAP模式的正确性修复：
 
-- OAuth refresh 现在显式发送官方完整 scope `https://outlook.office.com/IMAP.AccessAsUser.All`，避免多资源 refresh token 默认签发错误 audience/scope 的 access token；
+- IMAP模式的OAuth refresh显式发送官方完整 scope `https://outlook.office.com/IMAP.AccessAsUser.All`，避免依赖默认资源选择；Graph模式不使用此scope；
 - `invalid_scope` 和 OAuth 成功响应中的错误 scope 映射为 `SOURCE_REAUTH_REQUIRED`；
 - 对含 `!`、`*`、`$`、`_`、`-` 的 opaque refresh token 增加 form round-trip regression，确认编码不改写 token；
 - 增加固定、无敏感信息的 `source_stage` 日志：`outlook_oauth_token`、`outlook_oauth_scope`、`outlook_imap_auth`；
@@ -335,6 +362,6 @@ SIGTERM graceful shutdown：exit 0
 1. 仓库已完成 Go-only 收口，但新鲜 Outlook 码、未读保持、真实 VPS/Caddy 和消费项目部署验收仍未完成；
 2. 正式 Outlook Provider 不得退回复制 Phase 0 throwaway 实现；
 3. 不持久化任何 TOTP Secret、Outlook/FlySMS credential、邮件或验证码；
-4. 不跨请求缓存 TOTP 结果、OAuth access/refresh token 或 IMAP session；
+4. 不跨请求缓存 TOTP 结果、OAuth access/refresh token、IMAP session、Graph message ID或polling state；
 5. 不开启 CORS、UI、docs、pprof 或公网 listener；
 6. 回滚只使用前一个已校验的 Go static binary/checksum/SBOM，不再保留第二套服务实现。

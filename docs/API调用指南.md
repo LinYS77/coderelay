@@ -89,31 +89,66 @@ CodeRelay 还按来源 IP 应用独立 token bucket，且两类限流状态都�
 
 ## 4. Outlook
 
-请求：
+Outlook 请求必须根据 refresh token 实际具备的邮件访问授权选择模式。Microsoft Graph credential：
 
 ```json
 {
   "type": "outlook",
+  "mail_access": "graph",
   "credential": "email----password----client_id----refresh_token",
   "not_before": "2026-07-31T03:00:00Z",
   "wait_seconds": 30
 }
 ```
 
-处理方式：
+IMAP credential：
+
+```json
+{
+  "type": "outlook",
+  "mail_access": "imap",
+  "credential": "email----password----client_id----refresh_token",
+  "not_before": "2026-07-31T03:00:00Z",
+  "wait_seconds": 30
+}
+```
+
+兼容规则：省略 `mail_access` 时仍按历史行为使用 `imap`。不支持 `auto`，CodeRelay 不会把一次 OAuth 失败当成协议探测信号。
+
+共同处理：
 
 ```text
 解析四段式
 → password 立即丢弃
-→ refresh token 换取 access token
-→ IMAP XOAUTH2
-→ readonly 选择 INBOX
-→ BODY.PEEK 读取，不标记已读
+→ 按 mail_access 刷新 access token
+→ 只读读取 INBOX
 → 提取六位验证码
-→ 请求结束清理引用
+→ 请求结束清理所有请求级引用
 ```
 
-CodeRelay 不使用 Outlook password；保留该字段只是为了兼容调用项目现有字符串格式。
+IMAP 模式：
+
+```text
+显式请求 https://outlook.office.com/IMAP.AccessAsUser.All
+→ IMAP XOAUTH2
+→ readonly Select("INBOX")
+→ BODY.PEEK partial FETCH
+```
+
+Graph 模式：
+
+```text
+refresh 请求不发送 scope
+→ 要求 User.Read + Mail.Read（或 Mail.ReadWrite）
+→ GET /me 并核对 credential email
+→ GET /me/mailFolders/inbox/messages
+→ bodyPreview 优先提取
+→ 必要时 GET message/$value 获取 bounded MIME
+```
+
+Graph 模式只会对 Graph 资源发送 `GET`，不会发送、修改、标记已读或删除邮件。`Mail.ReadBasic` 单独存在不足以读取验证码正文。Graph 和 IMAP 模式都使用固定 Microsoft endpoint，不接受调用方 URL。
+
+CodeRelay 不使用 Outlook password；保留该字段只是为了兼容调用项目现有字符串格式。`mail_access` 是非敏感的 credential 元数据，调用方应与 credential 一起保存；refresh-token rotation 不会改变它。
 
 ### Refresh token 轮换
 
@@ -199,6 +234,7 @@ async def request_current_code(credential: str) -> str:
     await trigger_remote_verification_email()
     code, credential_update = await resolve_code(
         type="outlook",
+        mail_access="graph",
         credential=credential,
         not_before=triggered_at,
     )
@@ -240,7 +276,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -263,6 +299,7 @@ async def resolve_code(
     *,
     type: str,
     credential: str,
+    mail_access: Literal["imap", "graph"] | None = None,
     not_before: datetime | None = None,
     wait_seconds: int = 30,
     min_ttl: int = 5,
@@ -271,6 +308,8 @@ async def resolve_code(
     if type == "totp":
         body["min_ttl"] = min_ttl
     else:
+        if type == "outlook" and mail_access is not None:
+            body["mail_access"] = mail_access
         body["wait_seconds"] = wait_seconds
         if not_before is not None:
             if not_before.tzinfo is None:
@@ -398,12 +437,16 @@ export async function resolveCode(body) {
 Outlook credential 错误不会把上游错误正文返回给调用方。管理员可以用响应的 `request_id` 查询 CodeRelay 结构化日志中的固定 `source_stage`：
 
 ```text
-outlook_oauth_token  Microsoft token endpoint 拒绝 refresh 请求
-outlook_oauth_scope  OAuth 返回的授权范围不含 IMAP scope
-outlook_imap_auth    Outlook IMAP 拒绝 XOAUTH2 token
+outlook_oauth_token    Microsoft token endpoint 拒绝 refresh 请求
+outlook_oauth_scope    OAuth 返回的授权范围不含 IMAP scope
+outlook_imap_auth      Outlook IMAP 拒绝 XOAUTH2 token
+outlook_graph_scope    Graph token 明确缺少 User.Read/Mail.Read
+outlook_graph_identity Graph /me 失败或账号与 credential email 不匹配
+outlook_graph_list     Graph Inbox 列表读取失败
+outlook_graph_message  Graph message MIME 读取失败
 ```
 
-这些字段不包含 email、token 或 credential。不得通过开启请求 body 日志或 IMAP `DebugWriter` 进行诊断。
+这些字段只包含固定枚举；Outlook provider 诊断还会带固定 `mail_access=imap|graph`。它们不包含 email、token、message ID 或 credential。不得通过开启请求 body 日志、Graph response body 日志或 IMAP `DebugWriter` 进行诊断。
 
 推荐最多重试 2～3 次。对 `SERVER_BUSY` 使用 `Retry-After` 加随机抖动，且总时长仍受 90 秒调用方 deadline 限制；不要无限重试 401、409、422、424 或任何 503。
 

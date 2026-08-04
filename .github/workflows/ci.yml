@@ -45,6 +45,7 @@ jobs:
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzCredentialParser -fuzztime=1s ./internal/provider/outlook
           go test -run '^$' -fuzz FuzzMIME -fuzztime=1s ./internal/provider/outlook
+          go test -run '^$' -fuzz FuzzGraphJSON -fuzztime=1s ./internal/provider/outlook
           go test -run '^$' -fuzz FuzzExtractor -fuzztime=1s ./internal/extractor
           go test -run '^$' -fuzz FuzzResponseContracts -fuzztime=1s ./internal/provider/flysms
           go test -run '^$' -fuzz FuzzRetryAfter -fuzztime=1s ./internal/provider/flysms
@@ -52,6 +53,7 @@ jobs:
       - name: Phase 5 concurrency acceptance
         run: |
           go test -v -count=1 -run 'TestTwentyConcurrent(TOTPRequestsAreIsolatedAndFast|CredentialsDoNotCross)' ./internal/api ./internal/provider/flysms
+          go test -v -count=1 -run '^TestGraphProviderTwentyConcurrentCredentialsStayIsolated$' ./internal/provider/outlook
           go test -v -count=1 -run 'Test(TwentyActiveFourQueuedAndTwentyFifthBusy|QueuedRequestWaitsForConfiguredTwoSeconds|QueuedRequestsArePromotedFIFOWithoutNewArrivalBypass)' ./internal/admission
       - name: Staticcheck and reachable vulnerability scan
         run: |
@@ -137,7 +139,7 @@ jobs:
           (cd /tmp/coderelay-artifact-layout && sha256sum -c coderelay.sha256 && sha256sum -c coderelay.cdx.json.sha256)
       - uses: actions/upload-artifact@v7
         with:
-          name: coderelay-go-phase5.4-linux-amd64
+          name: coderelay-go-phase5.5-linux-amd64
           path: |
             dist/coderelay
             dist/coderelay.sha256

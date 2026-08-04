@@ -5,6 +5,8 @@
 > 生产域名：`https://2fa.077.li`
 > 目标机器：Linux，1 vCPU，2 GiB RAM
 > 硬性容量目标：同一个 CodeRelay API Key 下稳定处理 20 个并发取码请求
+>
+> **2026-08-04 修订：** [`ADR 0001`](adr/0001-outlook-explicit-mail-access.md) 已取代本文中“Outlook 仅使用 IMAP”的早期假设。当前设计通过显式 `mail_access=imap|graph` 支持两种只读邮箱访问方式；省略时兼容为 IMAP，禁止自动探测。
 
 ---
 
@@ -24,12 +26,12 @@ CodeRelay 将从 Python/FastAPI/PyInstaller 重写为 Go 原生单二进制服�
 重写后的关键设计：
 
 1. 使用 Go 1.26.x 和标准库 `net/http`；
-2. HTTP Handler、Provider、IMAP 连接均以 `context.Context` 为生命周期边界；
+2. HTTP Handler、Provider、IMAP/Graph 请求均以 `context.Context` 为生命周期边界；
 3. 全局最多 20 个 active 请求，额外最多 4 个短队列请求；
 4. admission 在读取 JSON body 前完成，超载时不解析 credential；
 5. Microsoft/FlySMS 复用无 Cookie 的 HTTP 连接池；
 6. Outlook 使用 goroutine + Go 网络轮询，不使用 Python 式工作线程池；
-7. Outlook 使用readonly Select的邮件总数 + 单次批量、流式 sequence FETCH，响应中保留UID作为稳定标识；
+7. Outlook IMAP 使用 readonly Select + partial BODY.PEEK；Graph 使用固定 Inbox GET + preview-first/bounded MIME fallback；
 8. 不跨请求保存 credential、access token、refresh token、邮件或验证码；
 9. TOTP 采用纯标准库实现，无网络和第三方 TOTP 依赖；
 10. 所有内存、响应体、邮件体、正则、队列、连接和 goroutine 均有上限；
@@ -59,7 +61,7 @@ Content-Type: application/json
 支持：
 
 - `type=totp`：Base32 Secret 或 `otpauth://totp/...`；
-- `type=outlook`：`email----password----client_id----refresh_token`；
+- `type=outlook`：`email----password----client_id----refresh_token`，并可显式选择 `mail_access=imap|graph`；
 - `type=flysms`：`email---token---canonical_pickup_url`。
 
 普通成功响应：
@@ -376,9 +378,10 @@ CodeRelay Go :8787 loopback
 Resolver.Resolve(ctx, Command)
    │ request-scoped
    ├─ TOTP Provider
-   ├─ Outlook Provider
+   ├─ Outlook Provider（显式mail_access）
    │    ├─ shared Microsoft HTTP transport
-   │    └─ request-scoped IMAP TLS connection
+   │    ├─ IMAP：request-scoped TLS/XOAUTH2 session
+   │    └─ Graph：request-scoped GET/list/MIME polling state
    └─ FlySMS Provider
         └─ shared FlySMS HTTP transport
 ```
@@ -517,6 +520,7 @@ Outlook：
 ```json
 {
   "type": "outlook",
+  "mail_access": "graph",
   "credential": "email----password----client_id----refresh_token",
   "not_before": "2026-07-31T03:00:00Z",
   "wait_seconds": 30
@@ -543,7 +547,7 @@ FlySMS：
 - 第二阶段使用 `json.Decoder.DisallowUnknownFields()`，从而拒绝把 `min_ttl` 传给邮件类型或把 `wait_seconds` 传给 TOTP；
 - 拒绝重复 root key、非 object root、尾随 JSON value 和尾随非空白字符；
 - body buffer、`json.RawMessage` 和 credential临时 byte slice必须在 defer 中 best-effort `clear`；
-- `type` 必须是固定枚举；
+- `type` 必须是固定枚举；Outlook `mail_access` 只允许 `imap|graph`，省略时兼容为`imap`，拒绝`auto`；
 - 不在 validation error 中返回 input、字段 value 或底层 JSON syntax上下文；
 - credential长度按Unicode scalar二次校验：TOTP≤8,192，Outlook≤70,000，FlySMS≤4,096；
 - `not_before` 使用 RFC3339Nano，必须包含 timezone，转为 UTC，最多允许未来 5 分钟；
@@ -996,15 +1000,22 @@ Go string 也不能保证物理内存清零。实现应尽量使用局部变量�
 POST https://login.microsoftonline.com/common/oauth2/v2.0/token
 ```
 
-Form：
+Form按显式访问模式生成：
 
 ```text
-client_id
-grant_type=refresh_token
-refresh_token
+IMAP:
+  client_id
+  scope=https://outlook.office.com/IMAP.AccessAsUser.All
+  grant_type=refresh_token
+  refresh_token
+
+Graph:
+  client_id
+  grant_type=refresh_token
+  refresh_token
 ```
 
-不请求 Graph scope，不发送 password。
+Graph 模式保留原始 delegated grant，不能把无 scope 得到的 Graph access token继续用于 IMAP。两种模式都不发送 password。
 
 限制：
 
@@ -1012,7 +1023,7 @@ refresh_token
 - JSON unknown fields可忽略，但必需字段严格类型；
 - access token ≤128 KiB；
 - expires_in clamp 60～86400；
-- scope若存在，按空白切分并case-insensitive要求 `https://outlook.office.com/imap.accessasuser.all`；
+- scope若存在：IMAP 要求 `https://outlook.office.com/imap.accessasuser.all`；Graph 要求 `User.Read` 加 `Mail.Read` 或 `Mail.ReadWrite`；
 - 429解析Retry-After后映射`SOURCE_RATE_LIMITED`；
 - 400中的`invalid_grant/interaction_required/consent_required/login_required`映射`SOURCE_REAUTH_REQUIRED`，其他400和401/403映射`SOURCE_CREDENTIALS_INVALID`；
 - 5xx映射`UPSTREAM_FAILURE`，2xx malformed/oversize映射`UPSTREAM_SCHEMA_CHANGED`；
@@ -1020,9 +1031,25 @@ refresh_token
 
 Form body应直接append percent-encoding到请求级`[]byte`，避免先用`url.Values.Encode()`生成不可清零的大string；request完成后clear。Go的header/string副本仍不能保证物理清零，因此这只是减少副本而非绝对保证。
 
-Microsoft 返回新 refresh token 时写入请求级 `CredentialUpdate`。不论后续是否找到验证码，都要通过成功或错误 JSON交还调用方。同一Provider在一次请求的内部轮询中可复用本次access token；它只在快过期、IMAP认证失败或第二次OAuth refresh时替换，绝不跨HTTP请求缓存。第二次refresh若再次轮换，以最新token作为最终`credential_update`。
+Microsoft 返回新 refresh token 时写入请求级 `CredentialUpdate`。不论后续是否找到验证码，都要通过成功或错误 JSON交还调用方。同一Provider在一次请求的内部轮询中可复用本次access token；它只在快过期、IMAP/Graph认证失败或第二次OAuth refresh时替换，绝不跨HTTP请求缓存。第二次refresh若再次轮换，以最新token作为最终`credential_update`。
 
-### 13.3 IMAP 连接
+### 13.3 Microsoft Graph 模式
+
+Graph 模式固定使用 `https://graph.microsoft.com/v1.0`，禁代理、禁redirect、无Cookie，且 Graph 资源只允许GET：
+
+```text
+GET /me?$select=mail,userPrincipalName
+→ credential email必须匹配mail或userPrincipalName
+→ GET /me/mailFolders/inbox/messages
+→ 固定$select/$orderby/$filter/$top
+→ subject/from/bodyPreview优先提取
+→ 必要时GET /me/mailFolders/inbox/messages/{escaped-id}/$value
+→ 复用bounded MIME parser
+```
+
+只读取Inbox，不跟随`@odata.nextLink`。list JSON解压后≤1 MiB，单封MIME继续使用`max_message_bytes`；请求内最多保存50个已检查message ID，总ID字节≤128 KiB，避免每轮重复获取旧MIME。404/410 message视为邮件移动竞争并跳过。401最多强制refresh一次；403映射重新授权；429遵守bounded `Retry-After`。Graph不发送、PATCH、标记已读或删除邮件，也不持久化delta link/subscription。
+
+### 13.4 IMAP 连接
 
 每个 Outlook 请求使用独立 IMAP TLS connection，不跨请求复用 IMAP session。该session属于请求级Provider：第一次attempt建立，后续2秒轮询优先在同一健康连接上发送NOOP并再次批量读取，从而避免重复TLS/XOAUTH2；请求结束、错误、取消或deadline时必定关闭。协议错误时允许在本attempt预算内重连一次，认证错误则走“强制refresh一次”的专用路径，不能无界重连。
 
@@ -1042,7 +1069,7 @@ Microsoft 返回新 refresh token 时写入请求级 `CredentialUpdate`。不论
 
 context cancel 时使用 `context.AfterFunc(ctx, conn.Close)` 主动关闭底层 `net.Conn`，并为dial、TLS handshake、auth、fetch分别设置不晚于context deadline的conn deadline，避免库内部Wait永久阻塞。direct TLS必须验证系统CA、SNI=`outlook.office365.com`且最低TLS1.2。LOGOUT只能使用最多1秒cleanup budget；无论LOGOUT结果如何都立即Close，cleanup不得延长业务deadline。
 
-### 13.4 XOAUTH2
+### 13.5 XOAUTH2
 
 实现内部 `sasl.Client`：
 
@@ -1059,7 +1086,7 @@ user=<email>\x01auth=Bearer <access_token>\x01\x01
 3. 再失败映射 `SOURCE_CREDENTIALS_INVALID`；
 4. 整个请求最多两次 OAuth refresh。
 
-### 13.5 批量邮件读取
+### 13.6 批量邮件读取
 
 旧 Python 路径逐封 FETCH，网络往返高。Go热路径不执行会返回大量UID的`SEARCH ALL/SINCE`，而直接利用readonly Select已经返回的邮件总数：
 
@@ -1091,7 +1118,7 @@ BodySection Partial={Offset:0, Size:262144}
 
 freshness最终仍使用InternalDate、extractor max_age和`not_before`做UTC精确过滤。
 
-### 13.6 MIME
+### 13.7 MIME
 
 使用 go-message/mail streaming reader，并显式加载常见charset支持：
 
@@ -1116,7 +1143,7 @@ import _ "github.com/emersion/go-message/charset"
 - 不解压附件；
 - 不把正文写磁盘。
 
-### 13.7 go-imap beta 风险门禁
+### 13.8 go-imap beta 风险门禁
 
 Phase 0 必须证明：
 
