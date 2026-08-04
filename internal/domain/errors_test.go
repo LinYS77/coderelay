@@ -28,6 +28,21 @@ func TestCredentialUpdatePreservesCauseAndCopiesToken(t *testing.T) {
 	wrapped.Destroy()
 }
 
+func TestSourceStageSurvivesCredentialUpdateWrapping(t *testing.T) {
+	staged := WithSourceStage(ErrSourceCredentials, "outlook_imap_auth")
+	wrapped := WithCredentialUpdate(staged, []byte("rotated-token-value"))
+	if !errors.Is(wrapped, ErrSourceCredentials) {
+		t.Fatal("staged error lost its public cause")
+	}
+	if stage := SourceStageOf(wrapped); stage != "outlook_imap_auth" {
+		t.Fatalf("stage=%q", stage)
+	}
+	var update *CredentialUpdateError
+	if errors.As(wrapped, &update) {
+		update.Destroy()
+	}
+}
+
 func TestRetryAfterErrorPreservesCauseWithoutInput(t *testing.T) {
 	err := WithRetryAfter(ErrSourceRateLimited, 999)
 	if !errors.Is(err, ErrSourceRateLimited) || RetryAfter(err) != 300 {

@@ -15,7 +15,10 @@ import (
 	"github.com/LinYS77/coderelay/internal/extractor"
 )
 
-const outlookAttemptTimeout = 30 * time.Second
+const (
+	outlookAttemptTimeout = 30 * time.Second
+	stageOutlookIMAPAuth  = "outlook_imap_auth"
+)
 
 type Provider struct {
 	settings     config.OutlookConfig
@@ -432,7 +435,7 @@ func mapIMAPError(err error) error {
 		return domain.ErrUpstreamFailure
 	}
 	if isIMAPAuthError(err) {
-		return domain.ErrSourceCredentials
+		return domain.WithSourceStage(domain.ErrSourceCredentials, stageOutlookIMAPAuth)
 	}
 	return err
 }

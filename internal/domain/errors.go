@@ -18,6 +18,40 @@ var (
 	ErrUpstreamTimeout       = errors.New("upstream operation timed out")
 )
 
+type SourceStageError struct {
+	Cause error
+	Stage string
+}
+
+func (e *SourceStageError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "provider stage failed"
+	}
+	return e.Cause.Error()
+}
+
+func (e *SourceStageError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func WithSourceStage(cause error, stage string) error {
+	if cause == nil || stage == "" {
+		return cause
+	}
+	return &SourceStageError{Cause: cause, Stage: stage}
+}
+
+func SourceStageOf(err error) string {
+	var staged *SourceStageError
+	if errors.As(err, &staged) && staged != nil {
+		return staged.Stage
+	}
+	return ""
+}
+
 type CredentialUpdate struct {
 	RefreshToken []byte
 }

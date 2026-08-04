@@ -383,7 +383,7 @@ export async function resolveCode(body) {
 | 404 | `NO_FRESH_CODE` | 可按 `retry_after_seconds` 有限重试 |
 | 409 | `AMBIGUOUS_CODE` | 不要随机选码；联系管理员调整规则 |
 | 422 | `VALIDATION_ERROR` / `INVALID_CODE_REQUEST` | 不重试；修正 JSON 或 credential 格式 |
-| 424 | `SOURCE_CREDENTIALS_INVALID` | 不重试；替换请求级上游凭据 |
+| 424 | `SOURCE_CREDENTIALS_INVALID` | 不重试；检查请求中的 client ID/refresh token，并由管理员按 request ID 查看安全 `source_stage` |
 | 424 | `SOURCE_REAUTH_REQUIRED` | 不重试；重新获得 Outlook refresh token |
 | 424 | `SOURCE_EXPIRED_OR_DISABLED` | 不重试；检查 FlySMS 权益 |
 | 429 | `RATE_LIMITED` / `SOURCE_RATE_LIMITED` | 尊重 `Retry-After` |
@@ -394,6 +394,16 @@ export async function resolveCode(body) {
 | 504 | `UPSTREAM_TIMEOUT` | 有限指数退避 |
 
 任何响应都应先处理可选 `credential_update`。
+
+Outlook credential 错误不会把上游错误正文返回给调用方。管理员可以用响应的 `request_id` 查询 CodeRelay 结构化日志中的固定 `source_stage`：
+
+```text
+outlook_oauth_token  Microsoft token endpoint 拒绝 refresh 请求
+outlook_oauth_scope  OAuth 返回的授权范围不含 IMAP scope
+outlook_imap_auth    Outlook IMAP 拒绝 XOAUTH2 token
+```
+
+这些字段不包含 email、token 或 credential。不得通过开启请求 body 日志或 IMAP `DebugWriter` 进行诊断。
 
 推荐最多重试 2～3 次。对 `SERVER_BUSY` 使用 `Retry-After` 加随机抖动，且总时长仍受 90 秒调用方 deadline 限制；不要无限重试 401、409、422、424 或任何 503。
 

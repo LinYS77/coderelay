@@ -11,7 +11,7 @@
 | Phase 2：FlySMS | ✅ PASS | contract/fuzz/fault、真实 `NO_FRESH_CODE` 和真实 HTTP 200 六位码均通过 |
 | Phase 3：Outlook 正式实现 | 🟡 实现中 | 正式 Provider 与本地 hardening 已完成；真实 OAuth/XOAUTH2/IMAP、`NO_FRESH_CODE` 错误轮换交付通过，新鲜码/未读保持/soak 仍待完成 |
 | Phase 4：Extractor parity | ✅ PASS | 48 个语言无关 golden fixtures；冻结的 code/error contract 覆盖 ASCII 边界、RE2、casefold、HTML、sender、keyword、fallback、ambiguity、freshness、not_before、最新 UID |
-| Phase 5：并发与安全收口 | ✅ PASS | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 60 分钟 soak、RSS/FD/goroutine/log gate、static/SBOM 全部通过；旧服务已移除 |
+| Phase 5：并发与安全收口 | ✅ PASS | FIFO 20+4 admission、有界 IP/key bucket、pre-body gate、race/fuzz、offline pprof、单核 60 分钟 soak、RSS/FD/goroutine/log gate、static/SBOM 全部通过；Phase 5.2 增加 Outlook explicit IMAP scope 与安全 stage 诊断 |
 | Phase 6：真实验收 | ⬜ 未开始 |  |
 | Phase 7：切换与回滚 | ⬜ 未开始 |  |
 
@@ -158,6 +158,22 @@ supply chain:
 Go-only cleanup:
   legacy runtime/build artifacts: 0
   current-tree legacy artifacts: 0
+```
+
+## Phase 5.2 Outlook compatibility hotfix
+
+针对一类 refresh token 在其他工具可用、但 CodeRelay 返回 `SOURCE_CREDENTIALS_INVALID` 的情况：
+
+- OAuth refresh 现在显式发送官方完整 scope `https://outlook.office.com/IMAP.AccessAsUser.All`，避免多资源 refresh token 默认签发错误 audience/scope 的 access token；
+- `invalid_scope` 和 OAuth 成功响应中的错误 scope 映射为 `SOURCE_REAUTH_REQUIRED`；
+- 对含 `!`、`*`、`$`、`_`、`-` 的 opaque refresh token 增加 form round-trip regression，确认编码不改写 token；
+- 增加固定、无敏感信息的 `source_stage` 日志：`outlook_oauth_token`、`outlook_oauth_scope`、`outlook_imap_auth`；
+- OAuth body、Microsoft error description、email、access/refresh token 仍不会记录或返回。
+
+```text
+version: CodeRelay Go 1.0.0-phase5.2
+binary size: 9,314,466 bytes
+SHA-256: 634a8454d84d58ef2201e1c29cd4ef3ca443c62c7ec5ece7c5aadedc6a1c6501
 ```
 
 ## Phase 4 验收结果（冻结 extractor contract）

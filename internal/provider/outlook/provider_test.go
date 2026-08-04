@@ -31,6 +31,16 @@ func TestProviderUsesConfiguredExtractor(t *testing.T) {
 	}
 }
 
+func TestIMAPAuthenticationErrorHasSafeStage(t *testing.T) {
+	err := mapIMAPError(imapAuthError{})
+	if !errors.Is(err, domain.ErrSourceCredentials) {
+		t.Fatalf("error=%v", err)
+	}
+	if stage := domain.SourceStageOf(err); stage != stageOutlookIMAPAuth {
+		t.Fatalf("stage=%q", stage)
+	}
+}
+
 func TestProviderReturnsRotationWhenIMAPFails(t *testing.T) {
 	rotated := testRefreshToken('z')
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

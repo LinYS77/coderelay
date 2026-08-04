@@ -240,6 +240,16 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 			return
 		}
 		if problem := providerError(err); problem != nil {
+			if sourceStage := domain.SourceStageOf(err); sourceStage != "" {
+				h.logger.Warn(
+					"provider_request_failed",
+					"request_id", id,
+					"provider", string(command.Provider),
+					"source_stage", sourceStage,
+					"error_code", problem.Code,
+					"status", problem.Status,
+				)
+			}
 			writePublicErrorWithUpdate(writer, id, problem, update)
 			return
 		}

@@ -229,6 +229,18 @@ soak 使用随机 CodeRelay API token 和确定性的合成 TOTP credentials，�
 - SIGTERM graceful shutdown 和 clean exit；
 - steady RSS `<256 MiB`、stress peak RSS `<512 MiB`。
 
+## Outlook 安全诊断字段
+
+Outlook 鉴权失败时，服务日志只写固定、非敏感的 `source_stage`，不写 OAuth body、token、email 或 credential：
+
+```text
+outlook_oauth_token  Microsoft token endpoint 拒绝 refresh 请求
+outlook_oauth_scope  refresh token/app consent 未返回所需 IMAP scope
+outlook_imap_auth    Outlook IMAP 拒绝 XOAUTH2 access token
+```
+
+可用响应中的 `request_id` 在 `journalctl` 中关联。禁止为了诊断临时开启请求 body、OAuth body、IMAP debug writer 或 access log。
+
 ## 本地 runtime snapshot
 
 服务进程收到 `SIGUSR1` 时，只写一条不含请求或 credential 的结构化事件：

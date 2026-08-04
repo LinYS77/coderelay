@@ -23,9 +23,11 @@ import (
 )
 
 const (
-	imapScope          = "https://outlook.office.com/imap.accessasuser.all"
-	maxOAuthBodyBytes  = 1 << 20
-	maxAccessTokenSize = 128 << 10
+	imapScope              = "https://outlook.office.com/IMAP.AccessAsUser.All"
+	maxOAuthBodyBytes      = 1 << 20
+	maxAccessTokenSize     = 128 << 10
+	stageOutlookOAuth      = "outlook_oauth_token"
+	stageOutlookOAuthScope = "outlook_oauth_scope"
 )
 
 type OAuthResult struct {
@@ -127,8 +129,11 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	if c == nil || c.client == nil || credential == nil || ctx == nil {
 		return nil, domain.ErrUpstreamFailure
 	}
-	form := make([]byte, 0, len(credential.ClientID)+len(credential.RefreshToken)+64)
+	form := make([]byte, 0, len(credential.ClientID)+len(credential.RefreshToken)+len(imapScope)+80)
 	form = appendFormField(form, "client_id", credential.ClientID, false)
+	// Refresh tokens can cover multiple resources. Select the fixed Outlook
+	// IMAP resource explicitly instead of relying on the token's default scope.
+	form = appendFormField(form, "scope", []byte(imapScope), true)
 	form = appendFormField(form, "grant_type", []byte("refresh_token"), true)
 	form = appendFormField(form, "refresh_token", credential.RefreshToken, true)
 	defer clear(form)
@@ -147,7 +152,7 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	request.GetBody = nil
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", "CodeRelay-Outlook/1.0.0-phase5")
+	request.Header.Set("User-Agent", "CodeRelay-Outlook/1.0.0-phase5.2")
 	response, err := c.client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -195,8 +200,11 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	scopeVerified := true
 	if scope, exists := payload["scope"]; exists {
 		value, ok := rawString(scope)
-		if !ok || (value != "" && !hasScope(value, imapScope)) {
-			return nil, domain.ErrSourceCredentials
+		if !ok {
+			return nil, domain.ErrUpstreamSchemaChanged
+		}
+		if value != "" && !hasScope(value, imapScope) {
+			return nil, domain.WithSourceStage(domain.ErrSourceReauthRequired, stageOutlookOAuthScope)
 		}
 		scopeVerified = true
 	}
@@ -292,7 +300,7 @@ func mapOAuthHTTPError(status int, fields map[string]json.RawMessage, retryAfter
 		mapped = domain.WithRetryAfter(domain.ErrSourceRateLimited, parseRetryAfterOutlook(retryAfter, 5, time.Now().UTC()))
 	case status == http.StatusBadRequest:
 		switch optionalString(fields, "error") {
-		case "invalid_grant", "interaction_required", "consent_required", "login_required":
+		case "invalid_grant", "interaction_required", "consent_required", "login_required", "invalid_scope":
 			mapped = domain.ErrSourceReauthRequired
 		default:
 			mapped = domain.ErrSourceCredentials
@@ -302,6 +310,7 @@ func mapOAuthHTTPError(status int, fields map[string]json.RawMessage, retryAfter
 	default:
 		mapped = domain.ErrUpstreamFailure
 	}
+	mapped = domain.WithSourceStage(mapped, stageOutlookOAuth)
 	if fields == nil {
 		return mapped
 	}
