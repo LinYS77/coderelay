@@ -11,6 +11,7 @@ import (
 
 	"github.com/LinYS77/coderelay/internal/config"
 	"github.com/LinYS77/coderelay/internal/credential"
+	"github.com/LinYS77/coderelay/internal/domain"
 )
 
 func TestProviderCloseCancelsActiveOAuthRequest(t *testing.T) {
@@ -33,7 +34,7 @@ func TestProviderCloseCancelsActiveOAuthRequest(t *testing.T) {
 	defer secret.Destroy()
 	result := make(chan error, 1)
 	go func() {
-		_, _, err := provider.Resolve(context.Background(), secret, nil, 0)
+		_, _, err := provider.Resolve(context.Background(), domain.OutlookRequest{Credential: secret, MailAccess: domain.OutlookMailAccessIMAP})
 		result <- err
 	}()
 	select {
@@ -50,5 +51,46 @@ func TestProviderCloseCancelsActiveOAuthRequest(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Resolve did not stop after Provider.Close")
+	}
+}
+
+func TestProviderCloseCancelsActiveGraphRequest(t *testing.T) {
+	entered := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/token":
+			_, _ = writer.Write([]byte(`{"access_token":"graph-access","expires_in":3600,"scope":"User.Read Mail.Read"}`))
+		case "/v1.0/me":
+			_, _ = writer.Write([]byte(`{"mail":"user@example.com","userPrincipalName":"user@example.com"}`))
+		case "/v1.0/me/mailFolders/inbox/messages":
+			close(entered)
+			<-request.Context().Done()
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	provider := newGraphProviderForTest(t, server, time.Now().UTC())
+	secret := graphTestSecret()
+	defer secret.Destroy()
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := provider.Resolve(context.Background(), domain.OutlookRequest{Credential: secret, MailAccess: domain.OutlookMailAccessGraph})
+		result <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("Graph list request did not start")
+	}
+	provider.Close()
+	provider.Close()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Resolve error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Graph Resolve did not stop after Close")
 	}
 }

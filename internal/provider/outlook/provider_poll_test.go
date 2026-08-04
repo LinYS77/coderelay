@@ -17,6 +17,7 @@ import (
 
 	"github.com/LinYS77/coderelay/internal/config"
 	"github.com/LinYS77/coderelay/internal/credential"
+	"github.com/LinYS77/coderelay/internal/domain"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-imap/v2/imapserver"
 )
@@ -45,7 +46,7 @@ func TestProviderPollingReusesSessionAndReturnsRotation(t *testing.T) {
 	}
 	secret := credential.NewOwned([]byte("user@example.com----pw----550e8400-e29b-41d4-a716-446655440000----" + strings.Repeat("r", 120)))
 	defer secret.Destroy()
-	code, update, err := provider.Resolve(context.Background(), secret, nil, 1)
+	code, update, err := provider.Resolve(context.Background(), domain.OutlookRequest{Credential: secret, WaitSeconds: 1, MailAccess: domain.OutlookMailAccessIMAP})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}

@@ -19,7 +19,7 @@ type FlySMSProvider interface {
 }
 
 type OutlookProvider interface {
-	Resolve(context.Context, *credential.Secret, *time.Time, int) ([6]byte, *domain.CredentialUpdate, error)
+	Resolve(context.Context, domain.OutlookRequest) ([6]byte, *domain.CredentialUpdate, error)
 }
 
 type Resolver struct {
@@ -74,7 +74,12 @@ func (r *Resolver) Resolve(ctx context.Context, command *domain.Command) (domain
 		if r.outlook == nil {
 			return domain.Result{}, domain.ErrInvalidCodeRequest
 		}
-		code, update, err := r.outlook.Resolve(ctx, command.Credential, command.NotBefore, command.WaitSeconds)
+		code, update, err := r.outlook.Resolve(ctx, domain.OutlookRequest{
+			Credential:  command.Credential,
+			NotBefore:   command.NotBefore,
+			WaitSeconds: command.WaitSeconds,
+			MailAccess:  command.OutlookMailAccess,
+		})
 		if err != nil {
 			clear(code[:])
 			if update != nil {

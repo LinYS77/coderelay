@@ -1,4 +1,5 @@
-// Package outlook implements the request-scoped Outlook OAuth/IMAP provider.
+// Package outlook implements request-scoped Outlook OAuth with explicit IMAP
+// and Microsoft Graph mailbox-access modes.
 package outlook
 
 import (

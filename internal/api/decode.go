@@ -93,13 +93,27 @@ func decodeTOTPCommand(fields map[string]json.RawMessage) (*domain.Command, erro
 
 func decodeOutlookCommand(fields map[string]json.RawMessage, maxWait int, now time.Time) (*domain.Command, error) {
 	for key := range fields {
-		if key != "type" && key != "credential" && key != "not_before" && key != "wait_seconds" {
+		if key != "type" && key != "credential" && key != "not_before" && key != "wait_seconds" && key != "mail_access" {
 			return nil, validationError()
 		}
 	}
 	owned, err := decodeCredential(fields, 70_000)
 	if err != nil {
 		return nil, err
+	}
+	mailAccess := domain.OutlookMailAccessIMAP
+	if rawAccess, exists := fields["mail_access"]; exists {
+		var value string
+		if err := json.Unmarshal(rawAccess, &value); err != nil {
+			clear(owned)
+			return nil, validationError()
+		}
+		mailAccess = domain.OutlookMailAccess(value)
+		value = ""
+		if mailAccess != domain.OutlookMailAccessIMAP && mailAccess != domain.OutlookMailAccessGraph {
+			clear(owned)
+			return nil, validationError()
+		}
 	}
 	waitSeconds := 20
 	if rawWait, exists := fields["wait_seconds"]; exists {
@@ -118,10 +132,11 @@ func decodeOutlookCommand(fields map[string]json.RawMessage, maxWait int, now ti
 		return nil, err
 	}
 	return &domain.Command{
-		Provider:    domain.ProviderOutlook,
-		Credential:  credential.NewOwned(owned),
-		NotBefore:   notBefore,
-		WaitSeconds: waitSeconds,
+		Provider:          domain.ProviderOutlook,
+		Credential:        credential.NewOwned(owned),
+		NotBefore:         notBefore,
+		WaitSeconds:       waitSeconds,
+		OutlookMailAccess: mailAccess,
 	}, nil
 }
 

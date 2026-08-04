@@ -241,14 +241,17 @@ func (h *Handler) serveCode(writer http.ResponseWriter, request *http.Request, i
 		}
 		if problem := providerError(err); problem != nil {
 			if sourceStage := domain.SourceStageOf(err); sourceStage != "" {
-				h.logger.Warn(
-					"provider_request_failed",
+				fields := []any{
 					"request_id", id,
 					"provider", string(command.Provider),
 					"source_stage", sourceStage,
 					"error_code", problem.Code,
 					"status", problem.Status,
-				)
+				}
+				if command.Provider == domain.ProviderOutlook {
+					fields = append(fields, "mail_access", string(command.OutlookMailAccess))
+				}
+				h.logger.Warn("provider_request_failed", fields...)
 			}
 			writePublicErrorWithUpdate(writer, id, problem, update)
 			return

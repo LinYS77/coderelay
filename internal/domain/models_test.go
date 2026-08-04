@@ -10,14 +10,14 @@ import (
 func TestCommandAndResultDestroy(t *testing.T) {
 	raw := []byte("request-secret")
 	now := time.Now()
-	command := &Command{Provider: ProviderFlySMS, Credential: credential.NewOwned(raw), MinTTL: 5, NotBefore: &now, WaitSeconds: 20}
+	command := &Command{Provider: ProviderOutlook, Credential: credential.NewOwned(raw), MinTTL: 5, NotBefore: &now, WaitSeconds: 20, OutlookMailAccess: OutlookMailAccessGraph}
 	command.Destroy()
 	for _, value := range raw {
 		if value != 0 {
 			t.Fatal("command credential was not cleared")
 		}
 	}
-	if command.Credential != nil || command.Provider != "" || command.MinTTL != 0 || command.NotBefore != nil || command.WaitSeconds != 0 {
+	if command.Credential != nil || command.Provider != "" || command.MinTTL != 0 || command.NotBefore != nil || command.WaitSeconds != 0 || command.OutlookMailAccess != "" {
 		t.Fatal("command references were not released")
 	}
 	result := Result{Code: [6]byte{'1', '2', '3', '4', '5', '6'}}

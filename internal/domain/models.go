@@ -10,20 +10,26 @@ import (
 
 type Provider string
 
+type OutlookMailAccess string
+
 const (
 	ProviderTOTP    Provider = "totp"
 	ProviderFlySMS  Provider = "flysms"
 	ProviderOutlook Provider = "outlook"
+
+	OutlookMailAccessIMAP  OutlookMailAccess = "imap"
+	OutlookMailAccessGraph OutlookMailAccess = "graph"
 )
 
 var ErrInvalidCodeRequest = errors.New("invalid verification-code request")
 
 type Command struct {
-	Provider    Provider
-	Credential  *credential.Secret
-	MinTTL      int
-	NotBefore   *time.Time
-	WaitSeconds int
+	Provider          Provider
+	Credential        *credential.Secret
+	MinTTL            int
+	NotBefore         *time.Time
+	WaitSeconds       int
+	OutlookMailAccess OutlookMailAccess
 }
 
 func (c *Command) Destroy() {
@@ -36,6 +42,14 @@ func (c *Command) Destroy() {
 	c.MinTTL = 0
 	c.NotBefore = nil
 	c.WaitSeconds = 0
+	c.OutlookMailAccess = ""
+}
+
+type OutlookRequest struct {
+	Credential  *credential.Secret
+	NotBefore   *time.Time
+	WaitSeconds int
+	MailAccess  OutlookMailAccess
 }
 
 type Result struct {

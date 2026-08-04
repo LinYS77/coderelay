@@ -65,6 +65,87 @@ func TestOAuthRefreshUsesExpectedFormAndReturnsRotation(t *testing.T) {
 	result.Destroy()
 }
 
+func TestOAuthGraphRefreshOmitsScopeAndAcceptsMailRead(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := values["scope"]; exists {
+			t.Errorf("Graph refresh unexpectedly sent scope=%q", values.Get("scope"))
+		}
+		if values.Get("grant_type") != "refresh_token" || values.Get("refresh_token") == "" {
+			t.Error("Graph refresh form is incomplete")
+		}
+		_, _ = writer.Write([]byte(`{"access_token":"graph-access","expires_in":3600,"scope":"User.Read Mail.Read Mail.ReadBasic"}`))
+	}))
+	defer server.Close()
+	client := newOAuthClientForTest(server.URL, server.Client(), time.Second)
+	credential := oauthCredential(t, 'g')
+	defer credential.Destroy()
+	result, err := client.RefreshFor(t.Context(), &credential, oauthTargetGraph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Destroy()
+	if string(result.AccessToken) != "graph-access" || !result.ScopeVerified {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestOAuthGraphRefreshRejectsInsufficientMailScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"access_token":"graph-access","expires_in":3600,"scope":"User.Read Mail.ReadBasic"}`))
+	}))
+	defer server.Close()
+	client := newOAuthClientForTest(server.URL, server.Client(), time.Second)
+	credential := oauthCredential(t, 'g')
+	defer credential.Destroy()
+	_, err := client.RefreshFor(t.Context(), &credential, oauthTargetGraph)
+	if !errors.Is(err, domain.ErrSourceReauthRequired) || domain.SourceStageOf(err) != stageOutlookGraphScope {
+		t.Fatalf("error=%v stage=%q", err, domain.SourceStageOf(err))
+	}
+}
+
+func TestOAuthGraphScopeErrorCarriesRotation(t *testing.T) {
+	rotated := testRefreshToken('z')
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"access_token":"graph-access","expires_in":3600,"scope":"User.Read Mail.ReadBasic","refresh_token":"` + string(rotated) + `"}`))
+	}))
+	defer server.Close()
+	client := newOAuthClientForTest(server.URL, server.Client(), time.Second)
+	credential := oauthCredential(t, 'g')
+	defer credential.Destroy()
+	_, err := client.RefreshFor(t.Context(), &credential, oauthTargetGraph)
+	if !errors.Is(err, domain.ErrSourceReauthRequired) {
+		t.Fatalf("error=%v", err)
+	}
+	update := domain.CredentialUpdateOf(err)
+	if update == nil || string(update.RefreshToken) != string(rotated) {
+		t.Fatalf("update=%v", update)
+	}
+	update.Destroy()
+}
+
+func TestOAuthGraphRefreshAllowsMissingScopeForRuntimeVerification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte(`{"access_token":"graph-access","expires_in":3600}`))
+	}))
+	defer server.Close()
+	client := newOAuthClientForTest(server.URL, server.Client(), time.Second)
+	credential := oauthCredential(t, 'g')
+	defer credential.Destroy()
+	result, err := client.RefreshFor(t.Context(), &credential, oauthTargetGraph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Destroy()
+	if result.ScopeVerified {
+		t.Fatal("missing optional scope was marked verified")
+	}
+}
+
 func TestOAuthRefreshRoundTripsOpaqueRefreshTokenCharacters(t *testing.T) {
 	opaque := "M." + strings.Repeat("A!*$_-", 24)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

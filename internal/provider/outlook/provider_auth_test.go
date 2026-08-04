@@ -11,6 +11,7 @@ import (
 
 	"github.com/LinYS77/coderelay/internal/config"
 	"github.com/LinYS77/coderelay/internal/credential"
+	"github.com/LinYS77/coderelay/internal/domain"
 )
 
 func TestProviderRefreshesOnceAfterIMAPAuthFailure(t *testing.T) {
@@ -44,7 +45,7 @@ func TestProviderRefreshesOnceAfterIMAPAuthFailure(t *testing.T) {
 	}
 	secret := credential.NewOwned([]byte("user@example.com----pw----550e8400-e29b-41d4-a716-446655440000----" + strings.Repeat("r", 120)))
 	defer secret.Destroy()
-	code, _, err := provider.Resolve(context.Background(), secret, nil, 0)
+	code, _, err := provider.Resolve(context.Background(), domain.OutlookRequest{Credential: secret, MailAccess: domain.OutlookMailAccessIMAP})
 	if err != nil || string(code[:]) != "765432" {
 		t.Fatalf("Resolve = %q, %v", code, err)
 	}

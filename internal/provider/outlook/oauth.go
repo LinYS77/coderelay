@@ -20,6 +20,7 @@ import (
 
 	"github.com/LinYS77/coderelay/internal/config"
 	"github.com/LinYS77/coderelay/internal/domain"
+	"github.com/LinYS77/coderelay/internal/version"
 )
 
 const (
@@ -28,6 +29,14 @@ const (
 	maxAccessTokenSize     = 128 << 10
 	stageOutlookOAuth      = "outlook_oauth_token"
 	stageOutlookOAuthScope = "outlook_oauth_scope"
+	stageOutlookGraphScope = "outlook_graph_scope"
+)
+
+type oauthTarget uint8
+
+const (
+	oauthTargetIMAP oauthTarget = iota
+	oauthTargetGraph
 )
 
 type OAuthResult struct {
@@ -126,14 +135,24 @@ func (c *OAuthClient) Close() {
 }
 
 func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAuthResult, error) {
-	if c == nil || c.client == nil || credential == nil || ctx == nil {
+	return c.RefreshFor(ctx, credential, oauthTargetIMAP)
+}
+
+func (c *OAuthClient) RefreshFor(ctx context.Context, credential *Credential, target oauthTarget) (*OAuthResult, error) {
+	if c == nil || c.client == nil || credential == nil || ctx == nil || target != oauthTargetIMAP && target != oauthTargetGraph {
 		return nil, domain.ErrUpstreamFailure
 	}
-	form := make([]byte, 0, len(credential.ClientID)+len(credential.RefreshToken)+len(imapScope)+80)
+	capacity := len(credential.ClientID) + len(credential.RefreshToken) + 80
+	if target == oauthTargetIMAP {
+		capacity += len(imapScope)
+	}
+	form := make([]byte, 0, capacity)
 	form = appendFormField(form, "client_id", credential.ClientID, false)
-	// Refresh tokens can cover multiple resources. Select the fixed Outlook
-	// IMAP resource explicitly instead of relying on the token's default scope.
-	form = appendFormField(form, "scope", []byte(imapScope), true)
+	if target == oauthTargetIMAP {
+		// Refresh tokens can cover multiple resources. Select the fixed Outlook
+		// IMAP resource explicitly instead of relying on the token's default scope.
+		form = appendFormField(form, "scope", []byte(imapScope), true)
+	}
 	form = appendFormField(form, "grant_type", []byte("refresh_token"), true)
 	form = appendFormField(form, "refresh_token", credential.RefreshToken, true)
 	defer clear(form)
@@ -152,7 +171,7 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	request.GetBody = nil
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", "CodeRelay-Outlook/1.0.0-phase5.4")
+	request.Header.Set("User-Agent", "CodeRelay-Outlook/"+version.Value)
 	response, err := c.client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -197,43 +216,61 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	if !ok || !validAccessToken(accessToken) {
 		return nil, domain.ErrUpstreamSchemaChanged
 	}
-	scopeVerified := true
-	if scope, exists := payload["scope"]; exists {
-		value, ok := rawString(scope)
-		if !ok {
-			return nil, domain.ErrUpstreamSchemaChanged
-		}
-		if value != "" && !hasScope(value, imapScope) {
-			return nil, domain.WithSourceStage(domain.ErrSourceReauthRequired, stageOutlookOAuthScope)
-		}
-		scopeVerified = true
-	}
-	expires, expiresOK := parseExpires(payload["expires_in"])
-	if !expiresOK {
-		return nil, domain.ErrUpstreamSchemaChanged
-	}
-	result := &OAuthResult{AccessToken: []byte(accessToken), ExpiresInSeconds: expires, ScopeVerified: scopeVerified}
+	var rotatedRefresh []byte
 	if rotated, exists := payload["refresh_token"]; exists {
 		value, ok := rawString(rotated)
 		if !ok {
-			result.Destroy()
 			return nil, domain.ErrUpstreamSchemaChanged
 		}
 		if value != "" {
 			candidate := []byte(value)
 			if err := validateRefreshToken(candidate); err != nil {
 				clear(candidate)
-				result.Destroy()
 				return nil, domain.ErrUpstreamSchemaChanged
 			}
 			if replacement, changed := differentRefreshToken(candidate, credential.RefreshToken); changed {
-				result.RotatedRefreshToken = replacement
+				rotatedRefresh = replacement
 				candidate = nil
 			}
 			clear(candidate)
 		}
 	}
-	return result, nil
+	returnWithRotation := func(cause error) (*OAuthResult, error) {
+		wrapped := domain.WithCredentialUpdate(cause, rotatedRefresh)
+		clear(rotatedRefresh)
+		return nil, wrapped
+	}
+	scopeVerified := false
+	if scope, exists := payload["scope"]; exists {
+		value, ok := rawString(scope)
+		if !ok {
+			return returnWithRotation(domain.ErrUpstreamSchemaChanged)
+		}
+		switch target {
+		case oauthTargetIMAP:
+			if !hasScope(value, imapScope) {
+				return returnWithRotation(domain.WithSourceStage(domain.ErrSourceReauthRequired, stageOutlookOAuthScope))
+			}
+			scopeVerified = true
+		case oauthTargetGraph:
+			if value != "" {
+				if !hasNamedScope(value, "User.Read") || !hasNamedScope(value, "Mail.Read") && !hasNamedScope(value, "Mail.ReadWrite") {
+					return returnWithRotation(domain.WithSourceStage(domain.ErrSourceReauthRequired, stageOutlookGraphScope))
+				}
+				scopeVerified = true
+			}
+		}
+	}
+	expires, expiresOK := parseExpires(payload["expires_in"])
+	if !expiresOK {
+		return returnWithRotation(domain.ErrUpstreamSchemaChanged)
+	}
+	return &OAuthResult{
+		AccessToken:         []byte(accessToken),
+		RotatedRefreshToken: rotatedRefresh,
+		ExpiresInSeconds:    expires,
+		ScopeVerified:       scopeVerified,
+	}, nil
 }
 
 func decodeOAuthObject(body []byte) (map[string]json.RawMessage, error) {
@@ -389,6 +426,19 @@ func validAccessToken(value string) bool {
 func hasScope(value, expected string) bool {
 	for _, item := range strings.Fields(value) {
 		if strings.EqualFold(item, expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNamedScope(value, expected string) bool {
+	for _, item := range strings.Fields(value) {
+		name := item
+		if separator := strings.LastIndexByte(name, '/'); separator >= 0 {
+			name = name[separator+1:]
+		}
+		if strings.EqualFold(name, expected) {
 			return true
 		}
 	}

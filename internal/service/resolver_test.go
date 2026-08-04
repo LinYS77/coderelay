@@ -40,6 +40,36 @@ func (p *fakeFlySMSProvider) Resolve(_ context.Context, _ *credential.Secret, no
 	p.notBefore = notBefore
 	return p.code, nil
 }
+func TestResolverMapsOutlookMailAccess(t *testing.T) {
+	provider := &fakeOutlookProvider{code: [6]byte{'1', '2', '3', '4', '5', '6'}}
+	resolver := NewResolver(totp.New(), provider)
+	command := &domain.Command{
+		Provider:          domain.ProviderOutlook,
+		Credential:        credential.NewOwned([]byte("outlook-request-secret")),
+		WaitSeconds:       7,
+		OutlookMailAccess: domain.OutlookMailAccessGraph,
+	}
+	defer command.Destroy()
+	result, err := resolver.Resolve(context.Background(), command)
+	if err != nil || string(result.Code[:]) != "123456" {
+		t.Fatalf("result=%q error=%v", result.Code, err)
+	}
+	defer result.Destroy()
+	if provider.request.MailAccess != domain.OutlookMailAccessGraph || provider.request.WaitSeconds != 7 || provider.request.Credential != command.Credential {
+		t.Fatalf("request=%+v", provider.request)
+	}
+}
+
+type fakeOutlookProvider struct {
+	code    [6]byte
+	request domain.OutlookRequest
+}
+
+func (p *fakeOutlookProvider) Resolve(_ context.Context, request domain.OutlookRequest) ([6]byte, *domain.CredentialUpdate, error) {
+	p.request = request
+	return p.code, nil, nil
+}
+
 func TestResolverMapsTOTPAndDomainErrors(t *testing.T) {
 	provider := totp.NewWithClock(func() time.Time { return time.Unix(1_111_111_111, 0) })
 	resolver := NewResolver(provider)

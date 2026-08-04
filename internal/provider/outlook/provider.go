@@ -23,6 +23,7 @@ const (
 type Provider struct {
 	settings     config.OutlookConfig
 	oauth        *OAuthClient
+	graph        *graphClient
 	extractor    *extractor.Extractor
 	maxWait      int
 	now          func() time.Time
@@ -57,6 +58,7 @@ func New(cfg config.Config) (*Provider, error) {
 	return &Provider{
 		settings:   settings,
 		oauth:      oauth,
+		graph:      newGraphClient(graphBaseURL, oauth.client, oauth.networkTimeout),
 		extractor:  codeExtractor,
 		maxWait:    cfg.Server.MaxWaitSeconds,
 		now:        time.Now,
@@ -105,7 +107,21 @@ func mustDefaultExtractor() *extractor.Extractor {
 	return result
 }
 
-func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBefore *time.Time, waitSeconds int) ([6]byte, *domain.CredentialUpdate, error) {
+func (p *Provider) Resolve(ctx context.Context, request domain.OutlookRequest) ([6]byte, *domain.CredentialUpdate, error) {
+	mailAccess := request.MailAccess
+	if mailAccess == "" {
+		mailAccess = domain.OutlookMailAccessIMAP
+	}
+	if mailAccess == domain.OutlookMailAccessGraph {
+		return p.resolveGraph(ctx, request.Credential, request.NotBefore, request.WaitSeconds)
+	}
+	if mailAccess != domain.OutlookMailAccessIMAP {
+		return [6]byte{}, nil, domain.ErrInvalidCodeRequest
+	}
+	return p.resolveIMAP(ctx, request.Credential, request.NotBefore, request.WaitSeconds)
+}
+
+func (p *Provider) resolveIMAP(ctx context.Context, source *credential.Secret, notBefore *time.Time, waitSeconds int) ([6]byte, *domain.CredentialUpdate, error) {
 	var empty [6]byte
 	if p == nil || p.oauth == nil || p.extractor == nil || p.now == nil || p.sleep == nil || p.jitter == nil || p.lifecycle == nil || source == nil || ctx == nil || waitSeconds < 0 || waitSeconds > p.maxWait {
 		return empty, nil, domain.ErrInvalidCodeRequest
@@ -302,7 +318,11 @@ func (p *Provider) Resolve(ctx context.Context, source *credential.Secret, notBe
 }
 
 func (p *Provider) refreshAccess(ctx context.Context, credential *Credential, rotation *[]byte) ([]byte, time.Time, error) {
-	result, err := p.oauth.Refresh(ctx, credential)
+	return p.refreshAccessFor(ctx, credential, rotation, oauthTargetIMAP)
+}
+
+func (p *Provider) refreshAccessFor(ctx context.Context, credential *Credential, rotation *[]byte, target oauthTarget) ([]byte, time.Time, error) {
+	result, err := p.oauth.RefreshFor(ctx, credential, target)
 	if err != nil {
 		if token, cause, ok := consumeOAuthRotationError(err); ok {
 			if adoptErr := adoptRotation(credential, token, rotation); adoptErr == nil {

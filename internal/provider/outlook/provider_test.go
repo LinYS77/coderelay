@@ -54,7 +54,7 @@ func TestProviderReturnsRotationWhenIMAPFails(t *testing.T) {
 	}
 	secret := credential.NewOwned([]byte("user@example.com----pw----550e8400-e29b-41d4-a716-446655440000----" + strings.Repeat("r", 120)))
 	defer secret.Destroy()
-	_, update, err := provider.Resolve(context.Background(), secret, nil, 0)
+	_, update, err := provider.Resolve(context.Background(), domain.OutlookRequest{Credential: secret})
 	if !errors.Is(err, domain.ErrUpstreamFailure) {
 		t.Fatalf("Resolve error = %v", err)
 	}

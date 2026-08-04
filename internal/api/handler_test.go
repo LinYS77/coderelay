@@ -35,7 +35,7 @@ func TestHealthAndReadinessArePublic(t *testing.T) {
 	defer cancel()
 
 	live := perform(handler, http.MethodGet, "/health/live", nil, "")
-	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase5.4"`) {
+	if live.Code != http.StatusOK || !strings.Contains(live.Body.String(), `"version":"1.0.0-phase5.5"`) {
 		t.Fatalf("live: status=%d body=%s", live.Code, live.Body.String())
 	}
 	ready := perform(handler, http.MethodGet, "/health/ready", nil, "")
@@ -595,17 +595,17 @@ func TestResolverDeadlineUsesPublicTimeout(t *testing.T) {
 func TestProviderStageLogIsUsefulAndSecretFree(t *testing.T) {
 	causeSecret := "sensitive-provider-cause"
 	cause := fmt.Errorf("%w: %s", domain.ErrSourceCredentials, causeSecret)
-	handler, token, cancel := newTestHandler(t, errorResolver{cause: domain.WithSourceStage(cause, "outlook_oauth_token")}, nil)
+	handler, token, cancel := newTestHandler(t, errorResolver{cause: domain.WithSourceStage(cause, "outlook_graph_identity")}, nil)
 	defer cancel()
 	var logs strings.Builder
 	handler.logger = slog.New(slog.NewTextHandler(&logs, nil))
-	payload := []byte(`{"type":"outlook","credential":"user@example.com----pw----550e8400-e29b-41d4-a716-446655440000----` + strings.Repeat("r", 120) + `","wait_seconds":0}`)
+	payload := []byte(`{"type":"outlook","mail_access":"graph","credential":"user@example.com----pw----550e8400-e29b-41d4-a716-446655440000----` + strings.Repeat("r", 120) + `","wait_seconds":0}`)
 	response := perform(handler, http.MethodPost, "/api/v1/code", payload, string(token))
 	if response.Code != http.StatusFailedDependency || errorCode(t, response) != "SOURCE_CREDENTIALS_INVALID" {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	logged := logs.String()
-	if !strings.Contains(logged, "provider=outlook") || !strings.Contains(logged, "source_stage=outlook_oauth_token") || !strings.Contains(logged, "error_code=SOURCE_CREDENTIALS_INVALID") {
+	if !strings.Contains(logged, "provider=outlook") || !strings.Contains(logged, "mail_access=graph") || !strings.Contains(logged, "source_stage=outlook_graph_identity") || !strings.Contains(logged, "error_code=SOURCE_CREDENTIALS_INVALID") {
 		t.Fatalf("safe diagnostic fields missing: %s", logged)
 	}
 	if strings.Contains(logged, causeSecret) || strings.Contains(logged, testTOTPSecret) || strings.Contains(logged, string(token)) {
