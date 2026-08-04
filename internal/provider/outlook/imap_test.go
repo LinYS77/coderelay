@@ -52,8 +52,8 @@ func TestIMAPSessionXOAUTH2ReadonlyBatchPeek(t *testing.T) {
 			t.Fatalf("selectReadOnly() = %v", err)
 		}
 	}
-	if selected.NumMessages != 1 {
-		t.Fatalf("NumMessages = %d", selected.NumMessages)
+	if selected.NumMessages != 1 || session.selectedMessages != 1 {
+		t.Fatalf("NumMessages=%d stored=%d", selected.NumMessages, session.selectedMessages)
 	}
 	messages, err := session.fetchBatch(t.Context(), 10, 64<<10)
 	if err != nil {
@@ -73,6 +73,13 @@ func TestIMAPSessionXOAUTH2ReadonlyBatchPeek(t *testing.T) {
 	session.Close()
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMailboxCountFallsBackToSelectDataWhenSnapshotIsNil(t *testing.T) {
+	session := &imapSession{selectedMessages: 42}
+	if count := session.captureMailboxCount(); count != 42 {
+		t.Fatalf("count=%d, want selected fallback 42", count)
 	}
 }
 

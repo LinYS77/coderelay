@@ -25,12 +25,13 @@ type imapAuthError struct{}
 func (imapAuthError) Error() string { return "Outlook IMAP authentication failed" }
 
 type imapSession struct {
-	conn       *cappedDeadlineConn
-	tlsConn    *tls.Conn
-	client     *imapclient.Client
-	cancelStop func() bool
-	stageLimit time.Duration
-	closeOnce  sync.Once
+	conn             *cappedDeadlineConn
+	tlsConn          *tls.Conn
+	client           *imapclient.Client
+	cancelStop       func() bool
+	stageLimit       time.Duration
+	selectedMessages uint32
+	closeOnce        sync.Once
 }
 
 func readMessages(ctx context.Context, settings config.OutlookConfig, credential *Credential, accessToken []byte) ([]extractor.Message, error) {
@@ -190,22 +191,41 @@ func (s *imapSession) selectReadOnly(ctx context.Context) (*imap.SelectData, err
 	if err != nil {
 		return nil, err
 	}
+	s.selectedMessages = selected.NumMessages
 	return selected, nil
 }
 
 func (s *imapSession) noop(ctx context.Context) error {
-	return s.runStage(ctx, func() error { return s.client.Noop().Wait() })
+	err := s.runStage(ctx, func() error { return s.client.Noop().Wait() })
+	if err == nil {
+		s.captureMailboxCount()
+	}
+	return err
+}
+
+func (s *imapSession) captureMailboxCount() uint32 {
+	if s == nil {
+		return 0
+	}
+	// SelectData is the authoritative fallback. go-imap's asynchronous mailbox
+	// snapshot can be transiently nil even after Select.Wait returns, especially
+	// under race instrumentation or scheduler pressure. A nil snapshot must not
+	// be treated as a protocol failure or force a needless reconnect.
+	count := s.selectedMessages
+	if s.client != nil {
+		if mailbox := s.client.Mailbox(); mailbox != nil {
+			count = mailbox.NumMessages
+			s.selectedMessages = count
+		}
+	}
+	return count
 }
 
 func (s *imapSession) fetchBatch(ctx context.Context, maxMessages int, maxBytes int64) ([]extractor.Message, error) {
 	if s == nil || s.client == nil || maxMessages < 1 || maxBytes < 1 {
 		return nil, domain.ErrUpstreamFailure
 	}
-	mailbox := s.client.Mailbox()
-	if mailbox == nil {
-		return nil, domain.ErrUpstreamFailure
-	}
-	sequenceSet := recentSequenceSet(mailbox.NumMessages, maxMessages)
+	sequenceSet := recentSequenceSet(s.captureMailboxCount(), maxMessages)
 	if sequenceSet.String() == "" {
 		return []extractor.Message{}, nil
 	}

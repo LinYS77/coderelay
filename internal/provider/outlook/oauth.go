@@ -152,7 +152,7 @@ func (c *OAuthClient) Refresh(ctx context.Context, credential *Credential) (*OAu
 	request.GetBody = nil
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.Header.Set("User-Agent", "CodeRelay-Outlook/1.0.0-phase5.2")
+	request.Header.Set("User-Agent", "CodeRelay-Outlook/1.0.0-phase5.3")
 	response, err := c.client.Do(request)
 	if err != nil {
 		if ctx.Err() != nil {
